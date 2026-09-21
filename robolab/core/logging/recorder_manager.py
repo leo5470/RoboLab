@@ -12,6 +12,7 @@ from isaaclab.envs.manager_based_env import ManagerBasedEnv
 from isaaclab.managers.recorder_manager import DatasetExportMode, RecorderManager, RecorderManagerBaseCfg
 from isaaclab.utils.datasets import EpisodeData
 
+from robolab.core.logging.buffered_episode import BufferedEpisodeData
 from robolab.core.logging.streaming_hdf5_handler import StreamingHDF5DatasetFileHandler
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,12 @@ class RobolabRecorderManager(RecorderManager):
             self._step_count[env_id] = 0
 
         self._auto_flush_verbose: bool = False  # Print diagnostics on auto-flush
+        self._hdf5_compression: str | None = "gzip"
+        self._flush_memory_cleanup: bool = True
+
+        # Recording-level attrs stamped on the HDF5 ``data`` group. Held here so
+        # they survive a file switch (set_hdf5_file recreates the handler).
+        self._dataset_attrs: dict = {}
 
         self.initialized = True
 
@@ -161,6 +168,20 @@ class RobolabRecorderManager(RecorderManager):
                 return term
         return None
 
+    def _new_episode(self):
+        return getattr(self, "_episode_type", EpisodeData)()
+
+    def set_buffered_recording(self):
+        """Enable amortized appends, preserving any data captured during setup."""
+        self._episode_type = BufferedEpisodeData
+        for env_id, previous in self._episodes.items():
+            episode = self._new_episode()
+            episode.data = previous.data
+            episode.seed = previous.seed
+            episode.env_id = previous.env_id
+            episode.success = previous.success
+            self._episodes[env_id] = episode
+
     def set_flush_interval(self, interval: int, verbose: bool = False):
         """Set the automatic flush interval.
 
@@ -174,6 +195,71 @@ class RobolabRecorderManager(RecorderManager):
             print(f"[RobolabRecorderManager] Auto-flush enabled: every {interval} steps")
         else:
             print(f"[RobolabRecorderManager] Auto-flush disabled")
+
+    def set_flush_memory_cleanup(self, enabled: bool):
+        """Control expensive allocator cleanup after each streaming flush.
+
+        Python reference counting and PyTorch's caching allocator normally
+        reuse the released buffers. Forced garbage collection and CUDA cache
+        clearing are retained as an opt-in OOM workaround.
+        """
+        self._flush_memory_cleanup = bool(enabled)
+        state = "enabled" if self._flush_memory_cleanup else "disabled"
+        print(f"[RobolabRecorderManager] Flush memory cleanup {state}")
+
+    def set_dataset_attrs(self, attrs: dict):
+        """Stamp recording-level metadata on the HDF5 ``data`` group.
+
+        Used for provenance a consumer needs before reading any demo — e.g. the
+        deferred-image collection plan that ``scripts/materialize_demo_images.py``
+        rebuilds the environment from. Applied to the current file immediately
+        and re-applied to any file opened later.
+        """
+        self._dataset_attrs.update(attrs)
+        if self._hdf5_initialized:
+            self._apply_dataset_attrs()
+
+    def _apply_dataset_attrs(self):
+        """Write the stored dataset attrs onto every open file handler."""
+        if not self._dataset_attrs:
+            return
+        for handler in (self._dataset_file_handler, self._failed_episode_dataset_file_handler):
+            if handler is not None and hasattr(handler, "add_dataset_attrs"):
+                handler.add_dataset_attrs(self._dataset_attrs)
+
+    def set_episode_seed(self, seed: int, env_ids: Sequence[int] | None = None):
+        """Record the seed an episode was reset with, as a demo attr.
+
+        The recorder itself has no way to know the seed the driver reset with,
+        so drivers that vary it per attempt (e.g. keyboard collection) set it
+        here; it is written when the episode's first data reaches the file.
+        """
+        if not hasattr(self, "_episodes"):
+            return
+        if env_ids is None:
+            env_ids = list(range(self._env.num_envs))
+        if isinstance(env_ids, torch.Tensor):
+            env_ids = env_ids.tolist()
+        for env_id in env_ids:
+            if env_id in self._episodes:
+                self._episodes[env_id].seed = seed
+
+    def set_hdf5_compression(self, compression: str | None):
+        """Select compression for HDF5 datasets created by this recorder.
+
+        This must be called before set_hdf5_file or the first recorder write.
+        LZF trades some compression ratio for substantially lower CPU overhead
+        than gzip, which is useful for interactive image recording.
+        """
+        if compression == "none":
+            compression = None
+        if compression not in {None, "gzip", "lzf"}:
+            raise ValueError(f"Unsupported HDF5 compression: {compression!r}")
+        if self._hdf5_initialized:
+            raise RuntimeError(
+                "HDF5 compression must be set before opening the output file"
+            )
+        self._hdf5_compression = compression
 
     def _ensure_hdf5_handler(self, filename: str = None):
         """Create or switch the HDF5 file handler.
@@ -191,7 +277,9 @@ class RobolabRecorderManager(RecorderManager):
         if self._dataset_file_handler is not None:
             self._dataset_file_handler.close()
         else:
-            self._dataset_file_handler = StreamingHDF5DatasetFileHandler()
+            self._dataset_file_handler = StreamingHDF5DatasetFileHandler(
+                compression=self._hdf5_compression
+            )
 
         filepath = os.path.join(cfg.dataset_export_dir_path, filename)
         self._dataset_file_handler.create(filepath, env_name=self._env_name)
@@ -200,11 +288,14 @@ class RobolabRecorderManager(RecorderManager):
             if self._failed_episode_dataset_file_handler is not None:
                 self._failed_episode_dataset_file_handler.close()
             else:
-                self._failed_episode_dataset_file_handler = StreamingHDF5DatasetFileHandler()
+                self._failed_episode_dataset_file_handler = StreamingHDF5DatasetFileHandler(
+                    compression=self._hdf5_compression
+                )
             failed_path = os.path.join(cfg.dataset_export_dir_path, f"{filename}_failed")
             self._failed_episode_dataset_file_handler.create(failed_path, env_name=self._env_name)
 
         self._hdf5_initialized = True
+        self._apply_dataset_attrs()
 
     def set_hdf5_file(self, filename: str):
         """Switch to a new HDF5 file. Closes the current file and opens/creates the new one.
@@ -459,13 +550,20 @@ class RobolabRecorderManager(RecorderManager):
             target_handler.append_data(self._episodes[env_id], episode_index=episode_index)
             self._streaming_active[env_id] = True
 
-            # Clear the in-memory buffer (but episode stays open in HDF5)
-            self._episodes[env_id] = EpisodeData()
+            # Clear the in-memory buffer (but episode stays open in HDF5).
+            previous = self._episodes[env_id]
+            self._episodes[env_id] = self._new_episode()
+            self._episodes[env_id].seed = previous.seed
+            self._episodes[env_id].env_id = previous.env_id
+            self._episodes[env_id].success = previous.success
+            del previous
 
-            # Force garbage collection to actually free memory
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            # Optional OOM workaround. Avoid this in latency-sensitive loops:
+            # empty_cache synchronizes the CUDA allocator and defeats reuse.
+            if self._flush_memory_cleanup:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
             # === AFTER FLUSH DIAGNOSTICS ===
             if verbose:
@@ -556,6 +654,19 @@ class RobolabRecorderManager(RecorderManager):
                     target_handler = self._failed_episode_dataset_file_handler
 
             if target_handler is None:
+                # Success-only streaming may have written a provisional group
+                # before the outcome was known. Remove failed episodes from the
+                # success dataset while retaining bounded streaming memory.
+                episode_index = self._current_episode_index.get(env_id)
+                if is_streaming and self._dataset_file_handler is not None:
+                    self._dataset_file_handler.discard_episode(episode_index)
+                self._streaming_active[env_id] = False
+                self._episodes[env_id] = self._new_episode()
+                self._step_count[env_id] = 0
+                self._current_episode_index[env_id] = None
+                self._exported_failed_episode_count[env_id] = (
+                    self._exported_failed_episode_count.get(env_id, 0) + 1
+                )
                 continue
 
             # Get episode index for this environment (if set)
@@ -581,7 +692,7 @@ class RobolabRecorderManager(RecorderManager):
             # this env's demo is finalized in HDF5. Pairs with the frozen-env
             # skip in record_post_step: belt for the data we'll never record
             # again, suspenders for the data already in the buffer at export.
-            self._episodes[env_id] = EpisodeData()
+            self._episodes[env_id] = self._new_episode()
             self._step_count[env_id] = 0
 
             # Reset episode index after export
@@ -633,7 +744,7 @@ class RobolabRecorderManager(RecorderManager):
                                     "env_id=%d during clear(); demo may be incomplete.",
                                     env_id,
                                 )
-                self._episodes[env_id] = EpisodeData()
+                self._episodes[env_id] = self._new_episode()
                 # Reset streaming state since we're clearing
                 self._streaming_active[env_id] = False
                 # Reset episode index

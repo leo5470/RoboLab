@@ -36,7 +36,10 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
     other envs' open episodes.
     """
 
-    def __init__(self):
+    def __init__(self, compression: str | None = "gzip"):
+        if compression not in {None, "gzip", "lzf"}:
+            raise ValueError(f"Unsupported HDF5 compression: {compression!r}")
+        self._compression = compression
         self._hdf5_file_stream = None
         self._hdf5_data_group = None
         self._demo_count = 0
@@ -136,6 +139,18 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
         self._raise_if_not_initialized()
         self._env_args.update(env_args)
         self._hdf5_data_group.attrs["env_args"] = json.dumps(self._env_args)
+
+    def add_dataset_attrs(self, attrs: dict):
+        """Stamp extra attrs on the ``data`` group (recording-level metadata).
+
+        Kept separate from ``env_args`` so run-specific provenance (e.g. the
+        deferred-image collection plan) does not have to squeeze into the
+        robomimic-style env-args blob.
+        """
+        self._raise_if_not_initialized()
+        for key, value in attrs.items():
+            self._hdf5_data_group.attrs[key] = value
+        self._hdf5_file_stream.flush()
 
     def set_env_name(self, env_name: str):
         self._raise_if_not_initialized()
@@ -270,7 +285,9 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
 
         # Append all data
         for key, value in episode.data.items():
-            self._append_to_dataset(ep.group, key, value, ep.datasets)
+            self._append_to_dataset(
+                ep.group, key, value, ep.datasets, compression=self._compression
+            )
 
         # Update num_samples from actions shape
         if "actions" in episode.data:
@@ -318,6 +335,24 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
         if episode_index >= self._demo_count:
             self._demo_count = episode_index + 1
 
+        self._hdf5_file_stream.flush()
+
+    def discard_episode(self, episode_index: int | None = None) -> None:
+        """Drop an incrementally written episode without finalizing it."""
+        self._raise_if_not_initialized()
+        if episode_index is None:
+            if not self._open_episodes:
+                return
+            if len(self._open_episodes) > 1:
+                raise RuntimeError(
+                    "discard_episode() needs an episode_index when multiple "
+                    f"episodes are open: {list(self._open_episodes)}"
+                )
+            episode_index = next(iter(self._open_episodes))
+        self._open_episodes.pop(episode_index, None)
+        demo_name = f"demo_{episode_index}"
+        if demo_name in self._hdf5_data_group:
+            del self._hdf5_data_group[demo_name]
         self._hdf5_file_stream.flush()
 
     # ========================================================================
@@ -409,7 +444,7 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
         return np.asarray(value)
 
     @staticmethod
-    def _append_to_dataset(group, key, value, datasets_cache):
+    def _append_to_dataset(group, key, value, datasets_cache, compression="gzip"):
         """Append data to a resizable HDF5 dataset, creating it if needed."""
         if isinstance(value, dict):
             if key not in group:
@@ -418,7 +453,7 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
                 key_group = group[key]
             for sub_key, sub_value in value.items():
                 StreamingHDF5DatasetFileHandler._append_to_dataset(
-                    key_group, sub_key, sub_value, datasets_cache
+                    key_group, sub_key, sub_value, datasets_cache, compression=compression
                 )
         else:
             np_data = StreamingHDF5DatasetFileHandler._leaf_to_numpy(group, key, value)
@@ -437,7 +472,7 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
                     data=np_data,
                     maxshape=maxshape,
                     chunks=True,
-                    compression="gzip"
+                    compression=compression,
                 )
                 datasets_cache[cache_key] = dataset
 

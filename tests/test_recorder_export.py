@@ -41,3 +41,29 @@ def test_append_to_dataset_coerces_nontensor_leaves(tmp_path):
         pos = f["demo_0/initial_state/cameras/wrist/position"][()]
         assert pos.shape == (1, 3)
         np.testing.assert_allclose(pos[0], [1.0, 2.0, 3.0], rtol=1e-5)
+
+
+def test_append_to_dataset_honors_lzf_compression(tmp_path):
+    path = tmp_path / "episode_lzf.hdf5"
+    value = {"camera": np.zeros((2, 8, 8, 3), dtype=np.uint8)}
+
+    with h5py.File(path, "w") as f:
+        group = f.create_group("demo_0")
+        Handler._append_to_dataset(group, "obs", value, {}, compression="lzf")
+
+    with h5py.File(path, "r") as f:
+        assert f["demo_0/obs/camera"].compression == "lzf"
+
+
+def test_discard_streamed_episode_removes_provisional_group(tmp_path):
+    path = tmp_path / "episode.hdf5"
+    handler = Handler()
+    handler.create(str(path), env_name="test")
+    handler.begin_episode(episode_index=4)
+
+    assert "demo_4" in handler.get_episode_names()
+    handler.discard_episode()
+
+    assert "demo_4" not in handler.get_episode_names()
+    assert not handler.has_active_episode
+    handler.close()

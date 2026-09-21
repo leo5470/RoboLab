@@ -1,0 +1,6 @@
+# Separate helper environment only; do not install into the Isaac Sim environment.
+# API verified against this release; actual USB hardware validation is still required.
+lerobot[feetech]==0.4.4
+numpy>=1.26,<3
+scipy>=1.11,<2
+pyzmq>=26.2.1,<28

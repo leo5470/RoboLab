@@ -5,15 +5,87 @@
 
 ``restore_recorded_initial_state`` puts the scene in the exact state a
 recording started from, so an open-loop action replay evolves the same way the
-recording did. ``StateValidator`` measures how closely a replay tracks the
-recorded per-step states — a debug tool that turns "the replay diverged" from
-a guess into a measurement.
+recording did. ``restore_scene_state`` is the lower-level building block: it
+writes one recorded state row straight into the simulator without touching
+episode counters, managers, or recorders — what offline rendering of a recorded
+trajectory needs (see :mod:`robolab.core.replay.materialize`).
+``StateValidator`` measures how closely a replay tracks the recorded per-step
+states — a debug tool that turns "the replay diverged" from a guess into a
+measurement.
 """
 
 import numpy as np
 import torch
 
 from robolab.core.utils.file_utils import load_hdf5_initial_state, load_hdf5_states
+
+
+def overlay_state_row(current: dict, recorded: dict, row: int = 0, *, num_envs: int = 1,
+                      device: str = "cpu", _path: str = "") -> list[str]:
+    """Write row ``row`` of a recorded state tree over ``current``, in place.
+
+    Both trees follow the ``InteractiveScene.get_state()`` layout. Recorded
+    leaves carry a leading axis (one row per recorded step, or a single row for
+    ``initial_state``); the selected row is tiled across ``num_envs`` so every
+    env is put in the state the recording was made against. Recorded keys that
+    the current scene does not have (e.g. the ``cameras`` block the initial-state
+    recorder adds, which is not a scene asset) are left out and reported.
+
+    Args:
+        current: The env's current state tree, mutated in place.
+        recorded: The recorded state tree (numpy arrays or tensors).
+        row: Index along each recorded leaf's leading axis.
+        num_envs: Number of envs to tile the recorded row across.
+        device: Device to place the resulting tensors on.
+
+    Returns:
+        Paths of recorded entries that were skipped because the scene has no
+        such key (empty when the recording matches the scene exactly).
+    """
+    skipped: list[str] = []
+    for key, value in recorded.items():
+        path = f"{_path}/{key}" if _path else key
+        if key not in current:
+            skipped.append(path)
+            continue
+        if isinstance(value, dict):
+            skipped.extend(
+                overlay_state_row(current[key], value, row, num_envs=num_envs, device=device, _path=path)
+            )
+        else:
+            selected = torch.as_tensor(np.asarray(value[row:row + 1]), device=device)
+            current[key] = selected.repeat(num_envs, *([1] * (selected.ndim - 1)))
+    return skipped
+
+
+def restore_scene_state(env, recorded_state: dict, row: int = 0) -> list[str]:
+    """Put the scene in a recorded state without disturbing episode state.
+
+    This is the lowest-level restore RoboLab offers: it overlays the recorded
+    row onto the env's current full state (``InteractiveScene.reset_to``
+    requires an entry for every scene asset, while the recorder only saves
+    dynamic ones) and writes it straight to the simulator. Unlike
+    ``env.reset_to()`` it does not touch the episode length buffer, the
+    managers, or the recorder terms, so it is safe to call once per frame while
+    walking a recorded trajectory.
+
+    Callers that need the change reflected in rendered images must follow this
+    with a simulator sync and render (see
+    :func:`robolab.core.replay.materialize.render_observations`).
+
+    Args:
+        env: The environment whose scene is restored.
+        recorded_state: A recorded state tree in ``InteractiveScene.get_state()``
+            layout with env-relative poses.
+        row: Index along each recorded leaf's leading axis.
+
+    Returns:
+        Paths of recorded entries the scene has no key for.
+    """
+    state = env.scene.get_state(is_relative=True)
+    skipped = overlay_state_row(state, recorded_state, row, num_envs=env.num_envs, device=env.device)
+    env.scene.reset_to(state, env_ids=None, is_relative=True)
+    return skipped
 
 
 def restore_recorded_initial_state(env, hdf5_path: str, episode: int) -> None:
@@ -26,17 +98,6 @@ def restore_recorded_initial_state(env, hdf5_path: str, episode: int) -> None:
     ``InteractiveScene.reset_to`` requires an entry for every scene asset,
     while the recorder only saves dynamic assets (e.g. no static table).
     """
-    def _overlay(current, recorded):
-        for key, value in recorded.items():
-            if key not in current:
-                print(f"WARNING: recorded initial state has '{key}' which is not in the scene; skipping.")
-                continue
-            if isinstance(value, dict):
-                _overlay(current[key], value)
-            else:
-                row = torch.as_tensor(value, device=env.device)[0:1]
-                current[key] = row.repeat(env.num_envs, *([1] * (row.ndim - 1)))
-
     try:
         recorded_state = load_hdf5_initial_state(hdf5_path, episode)
     except ValueError as err:
@@ -44,7 +105,9 @@ def restore_recorded_initial_state(env, hdf5_path: str, episode: int) -> None:
               "replaying from default reset state, which may diverge from the recording.")
         return
     state = env.scene.get_state(is_relative=True)
-    _overlay(state, recorded_state)
+    skipped = overlay_state_row(state, recorded_state, 0, num_envs=env.num_envs, device=env.device)
+    for path in skipped:
+        print(f"WARNING: recorded initial state has '{path}' which is not in the scene; skipping.")
     env.reset_to(state, env_ids=None, is_relative=True)
 
 

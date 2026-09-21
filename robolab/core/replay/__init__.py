@@ -11,7 +11,11 @@ what is being restored or checked (see ``docs/replay.md`` for the user guide):
   uses the exact recorded config values rather than the current repo's task
   definitions.
 - :mod:`~robolab.core.replay.scene_state` — reset the scene to the recorded
-  initial state, and validate per-step sim state against the recorded states.
+  initial state, restore any recorded state row into the simulator, and
+  validate per-step sim state against the recorded states.
+- :mod:`~robolab.core.replay.materialize` — render camera observations offline
+  from recorded states, turning a state-only (``--defer-images``) keyboard
+  recording into an ordinary image demonstration.
 
 For warning when the current IsaacSim/IsaacLab stack differs from the one an
 episode was recorded on, see
@@ -28,11 +32,26 @@ Typical driver flow:
 """
 
 from robolab.core.replay.env_config import apply_recorded_env_cfg, load_recorded_env_cfg
-from robolab.core.replay.scene_state import StateValidator, restore_recorded_initial_state
+from robolab.core.replay.materialize import (
+    RecordedEpisode,
+    materialize_episode,
+    observation_state_source,
+)
+from robolab.core.replay.scene_state import (
+    StateValidator,
+    overlay_state_row,
+    restore_recorded_initial_state,
+    restore_scene_state,
+)
 
 __all__ = [
     "apply_recorded_env_cfg",
     "load_recorded_env_cfg",
+    "materialize_episode",
+    "observation_state_source",
+    "overlay_state_row",
+    "RecordedEpisode",
     "restore_recorded_initial_state",
+    "restore_scene_state",
     "StateValidator",
 ]

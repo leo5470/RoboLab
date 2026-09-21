@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Deferred-image keyboard demo collection: `examples/collect_keyboard_demos.py
+  --defer-images` records actions, per-step scene states, seeds, and
+  proprioception with no policy-camera sensor in the scene, so nothing renders
+  per control step and teleoperation stays responsive. Failed attempts are
+  discarded before they reach the file, so they leave no holes behind
+  (`docs/keyboard_teleoperation.md`).
+- `scripts/materialize_demo_images.py` reconstructs the camera observations of
+  a state-only recording offline, rendering each frame from the recorded scene
+  state (never from open-loop action replay) and writing an ordinary RoboLab
+  image demonstration. Frame `0` renders `initial_state` and frame `t` renders
+  post-step state `t - 1`, matching RoboLab's pre-step observation recording.
+  Output is written atomically and refuses to overwrite without `--overwrite`
+  (`docs/replay.md`).
+- `examples/collect_keyboard_demos.py --render-interval N` sets how often the
+  scene renders (in physics sub-steps) so the operator's viewport can refresh
+  less often than the control loop runs — the remaining latency knob once
+  `--defer-images` has taken the policy cameras out of the loop, and free of
+  consequence there because the images are rendered offline. Warns when
+  combined with live camera recording, where a skipped render makes the
+  recorded image repeat the previous frame.
+- `robolab/core/replay/materialize.py`: reusable offline-rendering helpers
+  (recorded-episode loading, state-to-frame mapping, exact non-image copying,
+  atomic HDF5 output).
+- `robolab.core.replay.restore_scene_state` writes one recorded state row into
+  the simulator without touching episode counters, managers, or recorders.
+- `auto_register_droid_rel_ik_envs(include_policy_cameras=False)` registers an
+  environment with no policy-camera sensors (scene-mounted or robot-mounted)
+  and no `image_obs` group, while the Kit/WebRTC viewport keeps working.
+- `RobolabRecorderManager.set_dataset_attrs` and `set_episode_seed` stamp
+  recording-level metadata and the per-episode seed into the HDF5.
+
 ## [0.3.1] - 2026-08-11
 
 ### Added
