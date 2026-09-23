@@ -1,0 +1,3 @@
+# Upstream implementation and behavior used by examples/teleop_omy.py.
+# After installation: python scripts/patch_omy.py (required L100 trigger correction).
+omy-leader-isaaclab @ git+https://github.com/charlie8612/omy_leader_isaaclab.git@ed4608bd8c49133e3b9fc9d231bee651d8489b65

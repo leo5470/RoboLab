@@ -1,0 +1,50 @@
+{
+  "omy_sign": {
+    "joint_1": 1.0,
+    "joint_2": -1.0,
+    "joint_3": 1.0,
+    "joint_4": -1.0,
+    "joint_5": 1.0,
+    "joint_6": 1.0
+  },
+  "omy_zero_rad": {
+    "joint_1": -0.038886412972901,
+    "joint_2": -0.7238088347638398,
+    "joint_3": -1.095262282550348,
+    "joint_4": 0.1404206013230516,
+    "joint_5": 1.3204506622119598,
+    "joint_6": -0.6168136748088163
+  },
+  "gripper_closed_rad": 0.6152765099338249,
+  "gripper_open_rad": 0.0007671776931843203,
+  "range_min_rad": {
+    "joint_1": -5.278427891114491,
+    "joint_2": -1.765611886856373,
+    "joint_3": -3.035747979225684,
+    "joint_4": -4.164757839109516,
+    "joint_5": -2.386874105950058,
+    "joint_6": -2.1567769877672114,
+    "gripper": -3.0173402097710564
+  },
+  "range_max_rad": {
+    "joint_1": 3.6386024288647407,
+    "joint_2": 1.8146992720687134,
+    "joint_3": 2.8961557275280905,
+    "joint_4": 1.552388557340269,
+    "joint_5": 4.968563771961592,
+    "joint_6": 1.0737865515199487,
+    "gripper": -0.24390294527381706
+  },
+  "ready_reading_rad": {
+    "joint_1": -0.038886412972901,
+    "joint_2": 0.0615893286336085,
+    "joint_3": 1.2609322076419969,
+    "joint_4": 0.1404206013230516,
+    "joint_5": 1.3204506622119598,
+    "joint_6": 0.16858448858863195,
+    "gripper": -2.464800329974648
+  },
+  "created": "2026-09-23 15:16:25",
+  "note": "joint_4 direction flipped to -1 and READY zero measured with the L100 held at +8.05 deg; keep the leader supported at that pose through Sim startup, since releasing joint_4 lets it settle near +65.92 deg and moves Franka J6 toward +148 deg. L100 joint_6 READY reading is +0.16858448858863195 rad; its mapping zero is shifted by -45 deg so that READY maps to Franka J7 = 0 deg while preserving direction and scale; other arm zeros unchanged",
+  "j6_reset_deg": 90
+}

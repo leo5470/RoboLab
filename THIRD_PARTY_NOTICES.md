@@ -41,6 +41,18 @@ Installed only when the corresponding extra is requested (`uv sync --extra analy
 |---|---|---|---|
 | sbi | 0.26.1 | Apache-2.0 | https://github.com/sbi-dev/sbi/blob/main/LICENSE.txt |
 
+## Optional OMY teleoperation dependency
+
+Installed separately using `requirements-omy.txt`; not part of the base lockfile.
+
+| Package | Revision | License | License URL |
+|---|---|---|---|
+| omy-leader-isaaclab | ed4608bd8c49133e3b9fc9d231bee651d8489b65 | Apache-2.0 | https://github.com/charlie8612/omy_leader_isaaclab/blob/ed4608bd8c49133e3b9fc9d231bee651d8489b65/LICENSE |
+
+Its Dynamixel SDK and pyserial dependencies retain their own upstream licenses.
+RoboLab maintains an Apache-2.0 local correction in `patches/omy-leader-trigger.patch`
+for serial trigger normalization, motor configuration, parameter forwarding, and cleanup.
+
 ## System dependencies
 
 The following are not Python packages and must be installed via the host OS package manager (see [README](./README.md#installation)):

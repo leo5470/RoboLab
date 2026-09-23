@@ -76,6 +76,12 @@ python examples/run_gripper_toggle.py --task BananaInBowlTask --headless
 
 > **Replay**: `run_recorded.py` restores the recorded initial state, replays the recorded actions open-loop, and by default replays with the exact env configuration saved next to the recording (`env_cfg.json`). Note that the recorded outcome is not invariant across simulator versions — contact dynamics evolve between IsaacSim/IsaacLab releases (see [Requirements](#requirements)) — and faithful reproduction requires recording and replaying with a single env. See **[Replaying Recorded Episodes](docs/replay.md)** for the full guide, including replaying your own recordings, `--env-config`, and `--validate-states`.
 
+### Teleoperate with OMY-L100
+
+Use the dedicated [OMY-L100 teleoperation runner](docs/omy_teleoperation.md) to control
+DROID tasks with the upstream OMY-to-Franka joint-space implementation, record
+demonstrations, and optionally stream an operator view over TCP.
+
 ### Run with a policy
 
 RoboLab uses a **server-client architecture**: your model runs as a standalone server, and RoboLab connects to it via a lightweight inference client. To quickly test RoboLab, try [Pi0.5 via OpenPI](policies/pi0_family/README.md).
