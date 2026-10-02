@@ -5,7 +5,9 @@ import json
 
 import pytest
 
-from robolab.core.omy_teleop.options import ARM_JOINTS, build_parser, calibration_metadata, validate_args
+from robolab.core.omy_teleop.options import (
+    ARM_JOINTS, build_parser, calibration_metadata, control_decimation, validate_args,
+)
 
 
 def test_defaults_match_upstream():
@@ -15,11 +17,16 @@ def test_defaults_match_upstream():
     assert args.source == "serial"
     assert args.baudrate == 4_000_000
     assert args.read_hz == 100
+    assert args.control_hz == 60
+    assert control_decimation(args) == 2
     assert args.stale_s == 0.5
     assert not args.auto_zero
     assert not args.record and not args.record_images
     assert args.rendering_mode == "performance"
     assert args.episode_length_s == 10_000
+    assert args.performance_profile == "standard"
+    assert args.contact_history_length == 0
+    assert args.render_interval is None
     assert ARM_JOINTS == tuple(f"panda_joint{i}" for i in range(1, 8))
 
 
@@ -29,11 +36,24 @@ def test_defaults_match_upstream():
     ["--video-every", "0"], ["--baudrate", "0"], ["--tcp-port", "65536"],
     ["--video-port", "0"], ["--episode-length-s", "0"], ["--record-images"], ["--save-failures"],
     ["--calib", "/nonexistent/omy_calibration.json"],
+    ["--contact-history-length", "-1"], ["--stats-interval", "nan"], ["--stats-interval", "0"],
+    ["--render-interval", "0"], ["--render-interval", "3"],
+    ["--stream", "--render-interval", "6"],
+    ["--record", "--record-images", "--render-interval", "4"],
+    ["--control-hz", "15", "--stream", "--video-every", "1", "--render-interval", "6"],
 ])
 def test_invalid_options_rejected(argv):
     parser = build_parser()
     with pytest.raises(SystemExit):
         validate_args(parser, parser.parse_args(argv))
+
+
+@pytest.mark.parametrize("hz, decimation", [(15, 8), (30, 4), (60, 2)])
+def test_control_frequency_has_integer_physics_substeps(hz, decimation):
+    parser = build_parser()
+    args = parser.parse_args(["--control-hz", str(hz)])
+    validate_args(parser, args)
+    assert control_decimation(args) == decimation
 
 
 def test_calibration_provenance(tmp_path):

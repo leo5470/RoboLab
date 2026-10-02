@@ -85,6 +85,8 @@ def restore_scene_state(env, recorded_state: dict, row: int = 0) -> list[str]:
     state = env.scene.get_state(is_relative=True)
     skipped = overlay_state_row(state, recorded_state, row, num_envs=env.num_envs, device=env.device)
     env.scene.reset_to(state, env_ids=None, is_relative=True)
+    if hasattr(env, "invalidate_omy_state"):
+        env.invalidate_omy_state()
     return skipped
 
 

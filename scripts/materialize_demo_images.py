@@ -31,6 +31,7 @@ overlaid onto a freshly built config so the scene matches what was recorded
 
 # isort: skip_file
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -167,6 +168,15 @@ def _selected_episodes(available: list[str]) -> list[str]:
     return [name for name in available if name in selected]
 
 
+def _omy_collection_metadata(path: str) -> dict:
+    """Select the OMY absolute-joint camera variant for collection recordings."""
+    with h5py.File(path, "r") as file:
+        raw = file["data"].attrs.get("robolab_omy_collection")
+        if raw is None:
+            return {}
+        return json.loads(raw)
+
+
 def _build_env(metadata: dict):
     """Rebuild the recording's environment with its policy cameras restored.
 
@@ -185,15 +195,23 @@ def _build_env(metadata: dict):
     if viewport is None:
         viewport = bool(metadata.get("viewport_camera", False))
 
-    auto_register_droid_rel_ik_envs(
-        task=task,
-        env_postfix=metadata.get("env_postfix", "RelIK"),
-        include_viewport_camera=viewport,
-        include_policy_cameras=True,
-    )
+    if metadata.get("omy_collection"):
+        from robolab.core.omy_teleop.config import ENV_POSTFIX, register_omy_envs
+
+        register_omy_envs(task, images=True, stream=False)
+        expected_suffix = ENV_POSTFIX
+    else:
+        auto_register_droid_rel_ik_envs(
+            task=task,
+            env_postfix=metadata.get("env_postfix", "RelIK"),
+            include_viewport_camera=viewport,
+            include_policy_cameras=True,
+        )
+        expected_suffix = metadata.get("env_postfix", "RelIK")
     env_names = get_envs(task=task)
+    env_names = [name for name in env_names if name.endswith(expected_suffix)]
     if not env_names:
-        raise ValueError(f"No relative-IK environment found for task '{task}'")
+        raise ValueError(f"No {expected_suffix} environment found for task '{task}'")
     recorded_env_name = metadata.get("env_name")
     env_name = recorded_env_name if recorded_env_name in env_names else env_names[0]
     if recorded_env_name and recorded_env_name != env_name:
@@ -269,6 +287,18 @@ def main() -> int:
 
     warn_on_stack_mismatch(args_cli.input)
     metadata = read_deferred_metadata(args_cli.input)
+    omy_metadata = _omy_collection_metadata(args_cli.input)
+    if omy_metadata:
+        with h5py.File(args_cli.input, "r") as file:
+            source = json.loads(file["data"].attrs["robolab_omy_teleop"])
+        metadata = {
+            "omy_collection": True,
+            "task": source["task"],
+            "control_hz": source["control_hz"],
+            "sim_dt": source["performance"]["physics_dt"],
+            "decimation": source["performance"]["decimation"],
+            "base_seed": 0,
+        }
     if metadata:
         print(f"Recording: state-only, task '{metadata.get('task')}', "
               f"control {metadata.get('control_hz', float('nan')):.1f} Hz "

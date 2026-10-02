@@ -1,6 +1,6 @@
 """RoboLab task configuration for upstream OMY joint-space control.
 
-Import after Isaac Sim starts. Control math and the device remain upstream.
+Import after Isaac Sim starts. Control math remains upstream, with a local home adapter.
 """
 
 import math
@@ -9,10 +9,9 @@ import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 import numpy as np
 from isaaclab.devices import DevicesCfg
-from isaaclab.sensors import CameraCfg
+from isaaclab.sensors import CameraCfg, ContactSensorCfg
 from isaaclab.utils import configclass
 from omy_leader_isaaclab.device import OmyLeaderCfg
-from omy_leader_isaaclab.franka_config import FRANKA_HOME
 from scipy.spatial.transform import Rotation
 
 from robolab.constants import DEFAULT_TASK_SUBFOLDERS, TASK_DIR
@@ -23,7 +22,11 @@ from robolab.variations.backgrounds import HomeOfficeBackgroundCfg
 from robolab.variations.camera import OverShoulderLeftCameraCfg
 from robolab.variations.lighting import SphereLightCfg
 
-from .options import ARM_JOINTS
+from .device import RoboLabOmyLeaderCfg
+from .options import ARM_JOINTS, control_decimation
+from . import observations as omy_observations
+from .performance import render_interval
+from .contact_profile import selected_contact_sensors
 
 ENV_POSTFIX = "OMYL100"
 
@@ -41,13 +44,9 @@ class OmyDroidActionsCfg:
     )
 
 
-_robot = DroidCfg().robot.copy()
-_robot.init_state.joint_pos.update(dict(zip(ARM_JOINTS, FRANKA_HOME)))
-
-
 @configclass
 class OmyDroidCfg(DroidCfg):
-    robot = _robot
+    # Inherit DROID's reset pose; don't substitute upstream's cube-demo home.
     wrist_cam = None
 
 
@@ -87,7 +86,8 @@ def _operator_wrist_camera():
     )
 
 
-def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTFIX):
+def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTFIX,
+                      optimized_observations=True):
     """Register dedicated task variants; never alter the standard DROID registrations."""
     @configclass
     class SelectedRobotCfg(OmyDroidCfg):
@@ -96,7 +96,11 @@ def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTF
         # Putting this in the scene-camera mixin spawns it before its parent prim.
         omy_wrist_cam = _operator_wrist_camera() if stream else None
 
-    groups = {"proprio_obs": ProprioceptionObservationCfg()}
+    proprio = ProprioceptionObservationCfg()
+    if optimized_observations:
+        for name in ("ee_pos", "ee_quat", "eef_pos", "eef_quat"):
+            getattr(proprio, name).func = getattr(omy_observations, name)
+    groups = {"proprio_obs": proprio}
     cameras = []
     if images:
         cameras.append(OverShoulderLeftCameraCfg)
@@ -113,16 +117,60 @@ def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTF
     )
 
 
+def configure_performance(env_cfg, args):
+    """Modify only this OMY run's config, never shared DROID or task defaults."""
+    env_cfg.decimation = control_decimation(args)
+    env_cfg.sim.render_interval = render_interval(args, env_cfg.decimation)
+    env_cfg.omy_stepping_profile = getattr(args, "stepping_profile", "ordinary")
+    env_cfg.omy_substep_diagnostics = args.diagnostics
+    env_cfg.omy_recording_profile = getattr(args, "recording_profile", "full")
+    env_cfg.omy_episode_buffer_bytes = int(getattr(args, "episode_buffer_mb", 64) * 1024**2)
+    cap = getattr(args, "solver_position_iterations", None)
+    if cap is not None:
+        # Change the scene cap before PhysX is created, not the USD actor request.
+        physx = env_cfg.sim.physx
+        if not hasattr(physx, "max_position_iteration_count"):
+            raise ValueError("This OMY solver option requires scene iteration-cap support")
+        if physx.min_position_iteration_count > cap:
+            raise ValueError("The requested solver cap is below the scene minimum")
+        physx.max_position_iteration_count = cap
+    if env_cfg.omy_recording_profile == "compact":
+        from .recording import configure_compact_recording
+
+        configure_compact_recording(env_cfg, args)
+    contact_names = [name for name, sensor in vars(env_cfg.scene).items()
+                     if isinstance(sensor, ContactSensorCfg) and "__" in name]
+    effective, retained = selected_contact_sensors(args.task, contact_names, args.contact_sensors)
+    env_cfg.omy_contact_sensor_profile = effective
+    env_cfg.omy_contact_sensor_count_full = len(contact_names)
+    env_cfg.omy_contact_sensor_count = len(retained)
+    if effective == "required":
+        for name in contact_names:
+            if name not in retained:
+                setattr(env_cfg.scene, name, None)
+    elif args.contact_sensors == "required":
+        print(f"OMY contact sensors: {args.task} is not audited; keeping the full set.", flush=True)
+    print(f"OMY contact sensors: {effective}, {len(retained)}/{len(contact_names)} retained.", flush=True)
+    for name, sensor in vars(env_cfg.scene).items():
+        if isinstance(sensor, ContactSensorCfg) and not sensor.track_air_time:
+            sensor = sensor.copy()
+            sensor.history_length = args.contact_history_length
+            setattr(env_cfg.scene, name, sensor)
+
+
 def configure_device(env_cfg, args):
     if "gripper_open_pos" not in OmyLeaderCfg.__dataclass_fields__:
         raise RuntimeError("Install the L100 trigger correction: python scripts/patch_omy.py")
-    cfg = OmyLeaderCfg(
+    cfg = RoboLabOmyLeaderCfg(
         target="franka", source=args.source, port=args.port, baudrate=args.baudrate,
+        franka_initial_q=tuple(env_cfg.scene.robot.init_state.joint_pos[name] for name in ARM_JOINTS),
         gripper_open_pos=args.gripper_open,
         tcp_host=args.tcp_host, tcp_port=args.tcp_port, calib_path=args.calib,
         auto_zero=args.auto_zero, auto_zero_settle_s=args.auto_zero_settle_s,
         stale_s=args.stale_s, dt=env_cfg.sim.dt * env_cfg.decimation,
-        vel_scale=args.vel_scale, hz=args.read_hz, sim_device=env_cfg.sim.device,
+        # Retargeting is NumPy/CPU work. Validate on CPU before the runner's
+        # single transfer, avoiding a GPU reduction/readback just to check 8 values.
+        vel_scale=args.vel_scale, hz=args.read_hz, sim_device="cpu",
     )
     env_cfg.teleop_devices = DevicesCfg(devices={"omy_leader": cfg})
     return cfg

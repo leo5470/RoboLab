@@ -64,6 +64,7 @@ except ImportError:
 
 import robolab.constants
 import robolab.core.utils.usd_utils as usd_utils
+from robolab.core.omy_teleop.boundary import boundary_cached
 from robolab.core.sensors.contact_sensor_utils import (
     get_batch_contact_sensor,
     get_contact_sensor,
@@ -114,13 +115,54 @@ class WorldState:
         # the optional "__reset__" callable, which is invoked per env_ids on
         # episode reset.
         self._predicate_state: dict[str, dict] = {}
+        self._omy_batch_cache: dict = {}
+        self._omy_batch_stats = {"computed": 0, "reused": 0, "fallback": 0}
         self.set_world(env)
+
+    def clear_contact_cache(self):
+        """Invalidate OMY batch results at step and episode boundaries."""
+        self._omy_batch_cache.clear()
+        if getattr(self, "_boundary_query_cache", None) is not None:
+            self._boundary_query_cache.clear()
+
+    def _omy_batch_contacts(self, body: str, force_threshold: float):
+        """Return (boolean contact mask, object-name indices), or None to fall back."""
+        if getattr(self.env.cfg, "omy_contact_sensor_profile", "full") != "required":
+            return None
+        key = (body, force_threshold)
+        if key in self._omy_batch_cache:
+            self._omy_batch_stats["reused"] += 1
+            return self._omy_batch_cache[key]
+        sensor = get_batch_contact_sensor(self.env.scene, body)
+        if sensor is None:
+            self._omy_batch_stats["fallback"] += 1
+            return None
+        labels = [name for name in self.env.cfg.contact_object_list
+                  if name != "table" and hasattr(self.env.cfg.scene, name)]
+        paths = list(sensor.cfg.filter_prim_paths_expr)
+        expected = [getattr(self.env.cfg.scene, name).prim_path for name in labels]
+        forces = sensor.data.force_matrix_w
+        # PhysX can expand a filter path into multiple shapes. In that case
+        # retain the original individual-sensor behavior rather than guess indices.
+        if len(paths) != len(labels) or len(set(paths)) != len(paths) or \
+                set(paths) != set(expected) or forces is None or forces.ndim != 4 or \
+                forces.shape[0] != self.env.num_envs or forces.shape[2] != len(paths) or \
+                forces.shape[-1] != 3:
+            self._omy_batch_stats["fallback"] += 1
+            return None
+        indices = {name: paths.index(path) for name, path in zip(labels, expected)}
+        mask = (torch.abs(forces) > force_threshold).any(dim=-1).any(dim=1)
+        result = (mask, indices)
+        self._omy_batch_cache[key] = result
+        self._omy_batch_stats["computed"] += 1
+        return result
 
     def set_world(self, env: ManagerBasedRLEnv):
         if env != self.env:
             self.env = env
             self._local_geometry_cache.clear()
             self._predicate_state.clear()
+            self.clear_contact_cache()
             if robolab.constants.DEBUG:
                 caller_info = get_caller_info()
                 print(f"[{caller_info}] setting world for env. Objects: {list(self.entities.keys())}")
@@ -301,6 +343,7 @@ class WorldState:
             raise ValueError(f"Object {body_name} is not an articulation")
         return body.data.joint_names
 
+    @boundary_cached
     def get_joint_positions(self, body_name: str, env_id: int | None = None) -> torch.Tensor:
         """Get current joint positions.
 
@@ -314,6 +357,7 @@ class WorldState:
             return body.data.joint_pos.clone().detach()
         return body.data.joint_pos[env_id].clone().detach()
 
+    @boundary_cached
     def get_joint_velocity(self, body_name: str, env_id: int | None = None) -> torch.Tensor:
         """Get current joint velocities.
 
@@ -401,6 +445,7 @@ class WorldState:
                 return prim
         raise ValueError(f"[WorldState] Prim at path '{prim_path}' not found in scene")
 
+    @boundary_cached
     def get_pose(self, body_name: str, is_relative: bool = True, as_matrix: bool = False, env_id: int | None = None) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """Get pose in xyz, wxyz format.
 
@@ -482,6 +527,7 @@ class WorldState:
         else:
             return pos, quat
 
+    @boundary_cached
     def get_velocity(self, body_name: str, env_id: int | None = None) -> torch.Tensor:
         """Get velocity for a body. Returns zero velocity for XFormPrim extras.
 
@@ -512,6 +558,7 @@ class WorldState:
         geom = self._get_local_geometry(body)
         return geom['aabb_lower'].copy(), geom['aabb_upper'].copy()
 
+    @boundary_cached
     def get_bbox(self, body: str, env_id: int | None = None) -> tuple:
         """
         Get the Oriented Bounding Box (OBB) for a body in env-local coordinates
@@ -571,6 +618,7 @@ class WorldState:
         lower, upper = self.get_aabb(body)
         return (lower + upper) / 2
 
+    @boundary_cached
     def get_centroid(self, body: str, env_id: int | None = None):
         """
         Get the geometric center of a body's OBB in env-local coordinates
@@ -620,6 +668,19 @@ class WorldState:
 
     def _in_contact_pair(self, body1: str, body2: str, force_threshold: float, env_id: int | None):
         """Contact check for one concrete sensor pair (no alias resolution)."""
+        grippers = getattr(self.env.cfg, "contact_gripper", {}) or {}
+        if body1 in grippers and isinstance(grippers[body1], str):
+            batch = self._omy_batch_contacts(body1, force_threshold)
+            object_name = body2
+        elif body2 in grippers and isinstance(grippers[body2], str):
+            batch = self._omy_batch_contacts(body2, force_threshold)
+            object_name = body1
+        else:
+            batch = None
+            object_name = None
+        if batch is not None and object_name in batch[1]:
+            column = batch[0][:, batch[1][object_name]]
+            return bool(column[env_id].item()) if env_id is not None else column
         contact_sensor = get_contact_sensor(self.env.scene, body1, body2)
         if env_id is not None:
             force_matrix = contact_sensor.data.force_matrix_w[env_id]
@@ -667,6 +728,11 @@ class WorldState:
             return [obj for obj in candidates if obj in in_contact_any]
 
         body = members[0]
+        batch = self._omy_batch_contacts(body, force_threshold)
+        if batch is not None and all(name in batch[1] for name in candidates):
+            mask, indices = batch
+            hits = mask[env_id, [indices[name] for name in candidates]].tolist()
+            return [name for name, hit in zip(candidates, hits) if hit]
         batch_sensor = get_batch_contact_sensor(self.env.scene, body)
 
         if batch_sensor is None:

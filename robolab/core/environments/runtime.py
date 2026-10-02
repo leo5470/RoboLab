@@ -86,6 +86,7 @@ def create_env(scene: str | ManagerBasedEnvCfg,
                policy=None,
                renderer="realtime",
                rendering_mode=None,
+               env_class=None,
     ):
     """
     Creates and initializes a gym environment for the specified scene. Supported types: str, ManagerBasedEnvCfg.
@@ -145,6 +146,8 @@ def create_env(scene: str | ManagerBasedEnvCfg,
         tuple: (env, env_cfg) - The created environment instance and its configuration
     """
     env = None
+    if env_class is not None and (isinstance(scene, str) or not issubclass(env_class, RobolabEnv)):
+        raise ValueError("env_class injection requires a copied config and a RobolabEnv subclass")
 
     if isinstance(scene, str):
         # create a new stage
@@ -211,7 +214,7 @@ def create_env(scene: str | ManagerBasedEnvCfg,
             if robolab.constants.VERBOSE:
                 print(f"Merged events into environment configuration: {env_cfg.events}")
 
-        env = RobolabEnv(env_cfg)
+        env = (env_class or RobolabEnv)(env_cfg)
     else:
         raise ValueError(f"Unsupported scene type: {type(scene)}")
 

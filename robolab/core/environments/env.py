@@ -31,6 +31,8 @@ class RobolabEnv(ManagerBasedRLEnv):
     - Per-env result tracking (success/truncated, termination step)
     """
 
+    recorder_manager_type = RobolabRecorderManager
+
     def __init__(self, cfg, **kwargs):
         super().__init__(cfg, **kwargs)
         self._frozen_envs = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -60,10 +62,12 @@ class RobolabEnv(ManagerBasedRLEnv):
         finally:
             self.cfg.recorders = recorders_cfg
 
-        self.recorder_manager = RobolabRecorderManager(self.cfg.recorders, self)
+        self.recorder_manager = self.recorder_manager_type(self.cfg.recorders, self)
 
     def step(self, action):
         """Step the environment. Zero out actions for frozen (terminated) envs."""
+        if getattr(self.cfg, "omy_contact_sensor_profile", "full") == "required":
+            get_world(self).clear_contact_cache()
         self._has_stepped = True
         # Snapshot frozen state before step so recorder can detect newly-frozen envs
         self._pre_step_frozen = self._frozen_envs.clone()
@@ -82,6 +86,8 @@ class RobolabEnv(ManagerBasedRLEnv):
         3. Export its recording data
         4. Skip the actual reset (env holds its final state)
         """
+        if getattr(self.cfg, "omy_contact_sensor_profile", "full") == "required":
+            get_world(self).clear_contact_cache()
         if not self._has_stepped:
             # Initial reset — let all envs reset normally
             super()._reset_idx(env_ids)
@@ -92,21 +98,27 @@ class RobolabEnv(ManagerBasedRLEnv):
         for eid in env_ids.tolist():
             if not self._frozen_envs[eid]:
                 ep_len = int(self.episode_length_buf[eid].item())
-                if ep_len <= 2:
+                if ep_len <= 2 and not getattr(self.cfg, "omy_account_early_terminations", False):
                     # Physics artifact: terminated before the robot could act.
                     # Reset this env normally so it gets a clean start.
-                    artifact_ids = torch.tensor([eid], device=self.device, dtype=env_ids.dtype)
-                    super()._reset_idx(artifact_ids)
-                    get_world(self).reset_predicate_state(artifact_ids)
+                    # Reset once below, rather than both here and in active_ids.
                     continue
                 self._frozen_envs[eid] = True
-                self._env_results[eid] = bool(self.termination_manager.terminated[eid])
+                self._env_results[eid] = bool(self._episode_succeeded(eid))
                 self._env_term_step[eid] = ep_len
                 # Auto-export recording for this env
                 if self.recorder_manager is not None:
                     try:
+                        if getattr(self.cfg, "omy_account_early_terminations", False):
+                            self.recorder_manager.set_success_to_episodes(
+                                [eid], torch.tensor([self._env_results[eid]], device=self.device)
+                            )
                         self.recorder_manager.export_episodes(env_ids=[eid])
                     except Exception:
+                        if getattr(self.cfg, "omy_account_early_terminations", False):
+                            # Keep the pending buffer and stop OMY collection rather
+                            # than acknowledge an attempt whose export failed.
+                            raise
                         logger.exception(
                             "Failed to export recording for env_id=%d at step=%d; episode data may be incomplete.",
                             eid, ep_len,
@@ -123,6 +135,9 @@ class RobolabEnv(ManagerBasedRLEnv):
     def all_terminated(self) -> bool:
         """True when all envs have terminated."""
         return self._frozen_envs.all().item()
+
+    def _episode_succeeded(self, env_id):
+        return self.termination_manager.terminated[env_id]
 
     @property
     def active_env_ids(self) -> list[int]:

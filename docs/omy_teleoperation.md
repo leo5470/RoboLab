@@ -7,8 +7,10 @@ directly, pinned to commit `ed4608bd8c49133e3b9fc9d231bee651d8489b65` in
 [`requirements-omy.txt`](../requirements-omy.txt).
 
 There is no dependency on the keyboard/SO-101 collectors, relative IK, or deferred
-image collection. Quest 3S integration is not part of this first phase. This
-runner does not control a physical Franka.
+image collection. For Quest 3S head-tracked viewing with this same controller,
+use [`examples/teleop_omy_xr.py`](../examples/teleop_omy_xr.py), documented in
+[Quest viewing and L100 control](quest_viewing.md#l100-control-in-xr).
+These runners control the simulated DROID, not a physical Franka.
 
 ## Install
 
@@ -77,44 +79,159 @@ consecutive seeds. Ctrl+C ends the run instead of starting another attempt.
 The serial reader configures the leader hardware: upstream disables arm torque
 and enables the gripper's current-based spring. It is not a software gravity
 compensator. Support/position the arm appropriately before connecting.
-For this leader, the calibrated J6 = +90° READY pose is hand-held; its L100
-joint_4 settles roughly 58° away when released. Keep the leader supported in
-READY while the simulator starts. Once teleoperation begins, physical movement
-of joint_4 changes Franka J6; the software does not latch the READY pose.
+The current `omy_calib_robolab.json` anchors the new hand-held READY captured on
+2026-09-24 to the default DROID pose: Franka J1–J7 =
+`[0°, −36°, 0°, −144°, 0°, +108°, 0°]`, with the gripper released/open.
+Keep the leader supported in that READY pose while the simulator starts. The
+software does not latch a physical pose: once teleoperation begins, moving or
+releasing the unsupported leader moves the simulated arm.
+
+This replaces the earlier READY calibration, including its J6 = +90° reference.
+The L100 joint_6 direction was inverted after operator testing found the
+gripper wrist rotation reversed. Its software zero was recalculated from the
+same READY reading, so Franka J7 still starts at 0°. The other joint directions,
+gripper endpoints, and motor settings were preserved. The read-only capture and
+previous calibration are saved under `output/omy_ready_captures/` as
+`ready_20260924_132932.json` and
+`omy_calib_robolab.before_droid_20260924_132932.json`.
+Use the saved calibration without `--auto-zero` to reproduce this READY pose.
 
 ### Preserved control contract
 
 | Property | Behavior |
 |---|---|
-| Device | Native `OmyLeaderDevice`, `target="franka"` |
-| Physics / control | 120 Hz physics, two physics steps per action, nominal 60 Hz control |
+| Device | Local `RoboLabOmyLeaderDevice` home/reset adapter over native `OmyLeaderDevice`, `target="franka"` |
+| Physics / control | 120 Hz physics; `--control-hz 60` (default), `30`, or `15` selects 2, 4, or 8 physics steps per action |
 | Action | `[panda_joint1 … panda_joint7, gripper]`, absolute radians, no default offset or scaling |
 | Gripper | Upstream `+1` open / `-1` closed; Robotiq actuator targets 0 / π/4 |
-| Reset pose | Upstream `FRANKA_HOME`: `(0, −π/4, 0, −3π/4, 0, π/2, π/4)` |
+| Reset pose | Selected DROID environment's initial joint positions; default `[0°, −36°, 0°, −144°, 0°, +108°, 0°]` |
 | Mapping | Upstream calibration, direct/ZYZ wrist mode, clamps, and per-step rate limiting |
 | Missing/stale input | Hold the last command after `--stale-s` (default 0.5 s); resume automatically |
-| Startup auto-zero | Optional upstream `--auto-zero`, with `--auto-zero-settle-s` (default 3 s) |
-| Episode reset | Environment resets to home; `device.reset()` resets the mapper, not calibration or its last-command cache |
+| Startup auto-zero | Optional `--auto-zero` anchors the held pose to DROID home; direct wrist mode only, with `--auto-zero-settle-s` (default 3 s) |
+| Episode reset | Environment, mapper and cached command reset to DROID home/open; calibration is retained |
 
 With the default direct wrist mode and calibrated leader coordinates
 `u = sign × (raw − zero)`, the arm target before limits is
-`[u1, u2, 0, −u3, u5, π − u4, π/4 − u6]`. The RoboLab integration does not copy
-or reimplement that calculation; it calls upstream.
+`[u1, u2, 0, −u3, u5, r6 − u4, π/4 − u6]`, where `r6` is the calibration's
+`j6_reset_deg` converted to radians (upstream default 180°, current calibration
+108°). Runtime mapping and rate limiting still call upstream unchanged. The
+local calibration helper inverts this map to compute READY offsets; in
+particular, the joint-6 zero includes the wrist offset needed for Franka J7 = 0°.
 
-Important upstream behavior is deliberately retained: direct-mode auto-zero
-zeros all three wrist readings, so with the default `j6_reset_deg=180` its
-neutral J6 target is π, not the home pose's π/2. Choose/validate your upstream
-calibration accordingly. Also, if the stream is stale during a subsequent
-episode reset, the retained pre-reset target can be sent until fresh readings
-arrive. Disconnect/hold is not an emergency stop. Do not leave the operator
-setup unattended.
+The home adapter initializes the limiter and startup command at the same pose
+as the environment, instead of upstream's cube-demo home. A stale input holds
+the last command during an episode; an explicit episode reset clears that
+cache to DROID home/open until fresh readings arrive. Optional startup
+auto-zero captures once after settling, adjusts all six offsets to the selected
+home, and retains them across episode resets. It does not change the saved
+calibration file. ZYZ auto-zero is rejected before opening the input source;
+pre-calibrated ZYZ mapping remains available without auto-zero.
+Disconnect/hold is not an emergency stop. Do not leave the operator setup
+unattended.
 
 The robot asset, Robotiq mount, DROID actuators, table, task objects, and task
 success checking remain RoboLab's. This preserves upstream command semantics;
 it does not claim identical contact dynamics to upstream's Panda stack scene.
-The runner reports actual wall-clock control rate and joint tracking error every
-five seconds. Rendering/recording can make it slower than nominal 60 Hz; the
+The runner reports rolling wall-clock control/render/produced-video rates,
+host timing breakdowns, and joint tracking error every five seconds.
+Rendering/recording can make it slower than nominal 60 Hz; the
 upstream limiter uses the simulated 1/60 s step, not elapsed wall time.
+
+## OMY performance controls
+
+For the measured single-robot CPU-physics / GPU-rendering profile:
+
+```bash
+python examples/teleop_omy.py \
+  --task BananaInBowlTask --source serial --port /dev/robotis_left \
+  --calib omy_calib_robolab.json \
+  --headless --stream --performance-profile cpu
+```
+
+This does not open the GUI; connect the existing `omy-leader-viewer` below.
+No change to the JPEG protocol or the viewer is required. X11 forwarding still
+works, but a locally displayed viewer through an SSH tunnel avoids forwarding
+the remote GUI's decoded pixels.
+
+The four OMY-only changes are:
+
+1. **Bounded rolling telemetry.** Reports cover the last 300 control steps and
+   print every `--stats-interval` seconds (default 5). Control Hz includes pacing;
+   mean/p95 work time excludes deliberate pacing sleep. Region timings include
+   physics, rendering, sensor updates, observations, task checks, recording,
+   camera readback/composition, JPEG encoding, and remaining loop work. They are
+   exclusive host elapsed times, including synchronization, not GPU kernel
+   timings. No extra CUDA synchronization is inserted. Initialization and episode
+   resets are excluded. Video FPS means produced JPEGs, **not** received or X11
+   displayed frames; network/presentation latency is not measured here.
+2. **Opt-in CPU profile.** `--performance-profile cpu` selects CPU physics and
+   tensors, with RTX rendering on GPU 0, disables renderer multi-GPU, and supplies
+   eight Kit/TBB workers and two physics workers (bounded by CPU affinity). These
+   are process-local settings; saving persistent preferences is disabled. An
+   explicit `--device` wins: `--device cuda:1` keeps CUDA and skips CPU profile
+   tuning. Explicit `--kit_args` follow and override profile defaults. The default
+   `--performance-profile standard` retains Isaac Lab's device/worker selection.
+3. **Current contact forces without unused history.** OMY runs default to
+   `--contact-history-length 0`, instead of six historical force samples. Current
+   forces and task predicates are retained for active sensors.
+   Air-time-tracking sensors are left unchanged. Use `--contact-history-length 6`
+   for an A/B comparison or a custom task consuming force history. This override
+   is applied to the selected OMY instance, never shared DROID/task defaults.
+4. **Render/capture alignment.** For stream-only runs, automatic render interval
+   is `2 * --video-every` physics steps: the default sends and renders once every
+   two control steps (four physics steps). Capture follows an actual render on
+   the simulator's counter, including across episode resets. With
+   `--video-every 1`, automatic rendering returns to every control step. An
+   explicit `--render-interval` must be a positive multiple of two, and must
+   divide `2 * --video-every` when streaming. `--record-images` always defaults
+   to interval two and rejects other explicit intervals, preserving a render
+   every recorded control step; video sending can still be decimated.
+   For decimated streaming, Kit's additional render-rate limiter is disabled
+   through session-only launch defaults: the existing OMY control-loop pacer
+   already limits real-time execution. Physics and render timesteps are not
+   changed by this pacing adjustment. An explicit
+   `--kit_args="--/app/runLoops/main/rateLimitEnabled=true"` can override it.
+
+For audited OMY task variants, `--contact-sensors required` (default) also
+omits object-pair sensors that the task does not query. This retains 6 of 7
+BananaInBowl sensors and 16 of 79 AnimalsInBin sensors, including all gripper
+sensors. `--contact-sensors full` restores the original set for A/B comparison;
+unknown tasks always use the full set. The required profile reuses a validated
+gripper batch sensor for contact checks within a step and falls back to the
+individual pair sensors if its filter layout differs. It does not remove
+colliders or change physics. The comparison procedure is in
+[the XR collection guide](omy_xr_collection.md).
+
+For the earlier CUDA simulation settings, with the new telemetry only:
+
+```bash
+python examples/teleop_omy.py \
+  --task BananaInBowlTask --source serial --port /dev/robotis_left \
+  --calib omy_calib_robolab.json --headless --stream \
+  --performance-profile standard --device cuda:1 \
+  --contact-history-length 6 --render-interval 2
+```
+
+Every run saves effective simulation configuration in `env_cfg.json` and, on
+normal/interrupted shutdown, a final rolling summary and session counts in
+`omy_performance.json`. The latter includes actual worker/renderer settings.
+Recording metadata also includes the performance configuration. Neither profile
+changes the physics timestep, action decimation, solver iteration settings,
+actuator gains, mapping, calibration, observation contents, or JPEG quality.
+
+Earlier short stationary probes reached approximately 42 Hz with CPU physics,
+bounded workers, zero contact history, and render interval four. That is not a
+guarantee for active grasping, full-resolution image recording, or X11 display.
+Check the rolling rates and test grasp/lift/hold/release before collecting data;
+CPU and CUDA solvers are not assumed to produce identical trajectories.
+
+The implemented profile was also checked through this actual CLI with a
+synthetic TCP leader and a local JPEG receiver: a 600-step stationary run
+produced/received all 300 frames, with approximately 41 Hz control in the final
+300-step window and 20.8 FPS steady local decoding. This is not a measurement of
+remote X11 presentation. A pre-fix run reached only 27 Hz because initializing
+render interval four also configured Kit's render-rate limiter; disabling that
+second limiter was necessary to obtain the improvement without altering dt.
 
 ## Remote leader and operator view
 
@@ -164,7 +281,8 @@ python examples/teleop_omy.py \
 
 An output directory must be new or empty; existing data is never resumed or
 overwritten by this runner. Without `--output-dir`, a unique timestamped
-directory is created under `output/omy_teleop/`. Each run saves `env_cfg.json`.
+directory is created under `output/omy_teleop/`. Each run saves `env_cfg.json`
+and a shutdown performance summary, `omy_performance.json`.
 With `--record`, it also saves:
 
 - `omy_demos.hdf5`: successful episodes. With `--save-failures`, also includes
@@ -174,7 +292,7 @@ With `--record`, it also saves:
   end-effector/root poses, and available RoboLab subtask progress.
 - `data.attrs["robolab_omy_teleop"]`: JSON describing the upstream revision,
   action ordering/units/gripper signs, device settings, and calibration file
-  content/hash. Startup auto-zero changes are held inside the upstream device;
+  content/hash, selected home, and reset behavior. Startup auto-zero changes are held inside the device;
   this metadata records the supplied calibration, not the resulting live zero
   offsets. The actual commands remain recorded verbatim.
 
@@ -206,22 +324,24 @@ python examples/teleop_omy.py --headless --source tcp \
 ```
 
 The fake publisher's `franka` profile was defined for upstream's wrist model;
-do not assume that its rest readings map to `FRANKA_HOME` in the default direct
+do not assume that its rest readings map to DROID home in the default direct
 wrist mode. It is a transport/motion check, not a physical calibration.
 
 ```bash
-python -m pytest --confcutdir=tests/unit tests/unit/test_omy_options.py tests/unit/test_omy_launcher.py -q
+python -m pytest --confcutdir=tests/unit tests/unit/test_omy_calibration.py tests/unit/test_omy_options.py tests/unit/test_omy_launcher.py tests/unit/test_omy_performance.py tests/unit/test_omy_trigger.py -q
 python -m pytest tests/test_omy_teleop.py -q
 ```
 
 The integration tests require Isaac Sim and the optional OMY dependency, but
 never open a physical serial device. They check factory/config compatibility,
-upstream mapping and reset/stale semantics, action/gripper interpretation in
-simulation, and recording provenance. Physical leader commissioning is still
+upstream mapping, the DROID home/reset adapter and auto-zero, action/gripper
+interpretation in simulation, and recording provenance. Physical leader commissioning is still
 required before collecting real demonstrations.
 
 Validated on Isaac Sim 5.0 / Isaac Lab 2.2 with CPU and CUDA physics, the upstream
 fake TCP publisher/viewer, live camera recording, and consecutive episode resets.
 The 65-step CPU-physics run with full-resolution recording and operator video ran
 at roughly 4–6 Hz; nominal 60 Hz is a control configuration, not a demonstrated
-end-to-end throughput guarantee. Physical serial hardware and Quest remain untested.
+end-to-end throughput guarantee. The local leader's trigger and READY calibration
+have been measured separately; live grasping with the new READY remains an
+operator check. Quest remains untested.

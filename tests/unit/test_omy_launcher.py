@@ -10,7 +10,8 @@ import pytest
 
 
 @pytest.mark.parametrize("outcome, expected", [(0, 0), (130, 130), (RuntimeError("test failure"), 1)])
-def test_status_is_set_before_kit_shutdown(monkeypatch, capsys, outcome, expected):
+@pytest.mark.parametrize("profile", ["standard", "cpu"])
+def test_status_is_set_before_kit_shutdown(monkeypatch, capsys, outcome, expected, profile):
     calls = []
     app = SimpleNamespace(
         app=SimpleNamespace(post_quit=lambda status: calls.append(("quit", status))),
@@ -19,6 +20,9 @@ def test_status_is_set_before_kit_shutdown(monkeypatch, capsys, outcome, expecte
 
     class Launcher:
         def __init__(self, args):
+            if profile == "cpu":
+                assert args.device == "cpu"
+                assert "--/persistent/physics/numThreads=" in args.kit_args
             self.app = app
 
         @staticmethod
@@ -40,7 +44,7 @@ def test_status_is_set_before_kit_shutdown(monkeypatch, capsys, outcome, expecte
     monkeypatch.setitem(sys.modules, "isaaclab.app", fake_isaac_app)
     monkeypatch.setitem(sys.modules, "robolab.core.omy_teleop.runner", fake_runner)
     monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.1.0")
-    monkeypatch.setattr(sys, "argv", ["teleop_omy.py"])
+    monkeypatch.setattr(sys, "argv", ["teleop_omy.py", "--performance-profile", profile])
     path = Path(__file__).resolve().parents[2] / "examples" / "teleop_omy.py"
     spec = importlib.util.spec_from_file_location("omy_cli_test", path)
     module = importlib.util.module_from_spec(spec)

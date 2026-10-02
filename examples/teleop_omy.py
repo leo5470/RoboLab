@@ -8,12 +8,14 @@ import traceback
 from isaaclab.app import AppLauncher
 
 from robolab.core.omy_teleop.options import build_parser, validate_args
+from robolab.core.omy_teleop.performance import prepare_launcher
 
 
 def main():
     parser = build_parser(AppLauncher)
     args = parser.parse_args()
     validate_args(parser, args)
+    prepare_launcher(args)
     try:
         from importlib.metadata import version
         version("omy-leader-isaaclab")
