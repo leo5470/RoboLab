@@ -71,6 +71,10 @@ class RenderPacer:
 
     Only the active environment step is paced. Startup, READY, reset, and XR
     connection renders continue through the original simulator method.
+
+    The first deadline starts at step entry, before physics work. Overdue
+    renders never sleep; each actual render start anchors the next deadline,
+    discarding expired wall-clock slots without skipping simulator calls.
     """
 
     def __init__(self, sim, period_s, *, monitor=None, clock=time.perf_counter, sleep=time.sleep):
@@ -89,8 +93,10 @@ class RenderPacer:
         def paced(*args, **kwargs):
             if self.active:
                 now = self.clock()
-                if self.deadline is None or now - self.deadline > self.period_s:
-                    self.deadline = now + self.period_s
+                if self.deadline is None:
+                    # Normally initialized by step(); a reset during an active
+                    # step must not introduce another full-period wait.
+                    self.deadline = now
                 delay = self.deadline - now
                 if delay > 0:
                     if self.monitor is None:
@@ -98,8 +104,10 @@ class RenderPacer:
                     else:
                         with self.monitor.measure("pacing"):
                             self.sleep(delay)
-                now = self.clock()
-                self.deadline += self.period_s
+                # Anchor before the renderer, not after its potentially slow
+                # work. Late frames render now; subsequent early frames still
+                # wait a period, avoiding a catch-up burst after a stall.
+                self.deadline = self.clock() + self.period_s
             return self.original(*args, **kwargs)
 
         self.wrapper = paced
@@ -110,6 +118,8 @@ class RenderPacer:
 
     @contextmanager
     def step(self):
+        if self.deadline is None:
+            self.deadline = self.clock() + self.period_s
         self.active = True
         try:
             yield

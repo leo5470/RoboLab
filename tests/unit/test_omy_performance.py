@@ -136,7 +136,8 @@ class Clock:
         return self.now
 
 
-def test_low_rate_render_pacer_spaces_frames_and_restores_renderer():
+@pytest.mark.parametrize("hz", [30, 60])
+def test_low_rate_render_pacer_spaces_frames_and_restores_renderer(hz):
     clock = Clock()
     rendered = []
 
@@ -145,13 +146,13 @@ def test_low_rate_render_pacer_spaces_frames_and_restores_renderer():
             rendered.append(clock.now)
 
     sim = Sim()
-    pacer = RenderPacer(sim, 1 / 60, clock=clock, sleep=lambda seconds: setattr(clock, "now", clock.now + seconds))
+    pacer = RenderPacer(sim, 1 / hz, clock=clock, sleep=lambda seconds: setattr(clock, "now", clock.now + seconds))
     sim.render()  # READY rendering is never paced.
     with pacer.step():
         for _ in range(4):
             sim.render()
     assert rendered[0] == 0
-    assert rendered[1:] == pytest.approx([1 / 60, 2 / 60, 3 / 60, 4 / 60])
+    assert rendered[1:] == pytest.approx([i / hz for i in range(1, 5)])
     pacer.close()
     assert "render" not in vars(sim)
 
@@ -275,6 +276,167 @@ def test_render_pacer_recovers_after_a_stall_without_a_catchup_burst():
         recovery = clock.now
         sim.render()
         sim.render()
-    assert rendered[1] == pytest.approx(recovery + 1 / 30)
+    assert rendered[1] == pytest.approx(recovery)
     assert rendered[2] - rendered[1] == pytest.approx(1 / 30)
+    pacer.close()
+
+
+def make_pacer(clock, period=1 / 30, *, render_s=0.0, oversleep_s=0.0, monitor=None):
+    rendered, sleeps = [], []
+
+    class Sim:
+        def render(self):
+            rendered.append(clock.now)
+            clock.now += render_s
+            return len(rendered)
+
+    def sleep(delay):
+        sleeps.append(delay)
+        clock.now += delay + oversleep_s
+
+    sim = Sim()
+    pacer = RenderPacer(sim, period, clock=clock, sleep=sleep, monitor=monitor)
+    return sim, pacer, rendered, sleeps
+
+
+@pytest.mark.parametrize("work_s", [0.010, 1 / 30, 0.050])
+def test_first_render_deadline_is_anchored_before_physics(work_s):
+    clock = Clock()
+    sim, pacer, rendered, sleeps = make_pacer(clock)
+    with pacer.step():
+        clock.now += work_s
+        assert sim.render() == 1
+    assert rendered == pytest.approx([max(work_s, 1 / 30)])
+    expected = [1 / 30 - work_s] if work_s < 1 / 30 else []
+    assert sleeps == pytest.approx(expected)
+    pacer.close()
+
+
+@pytest.mark.parametrize("late_s", [0.0, 0.005, 0.050, 2.0])
+def test_due_or_late_render_never_sleeps_and_rebases_next_deadline(late_s):
+    clock = Clock()
+    sim, pacer, rendered, sleeps = make_pacer(clock)
+    with pacer.step():
+        sim.render()
+        sleeps.clear()
+        clock.now = pacer.deadline + late_s
+        recovery = clock.now
+        sim.render()
+        assert sleeps == []
+        assert rendered[-1] == pytest.approx(recovery)
+        sim.render()
+    assert rendered[-1] - rendered[-2] == pytest.approx(1 / 30)
+    pacer.close()
+
+
+def test_slow_renderer_does_not_add_a_full_period_after_completion():
+    clock = Clock()
+    sim, pacer, rendered, sleeps = make_pacer(clock, render_s=0.080)
+    with pacer.step():
+        sim.render()
+        sleeps.clear()
+        sim.render()
+        sim.render()
+    assert sleeps == []
+    assert rendered == pytest.approx([1 / 30, 1 / 30 + 0.080, 1 / 30 + 0.160])
+    pacer.close()
+
+
+def test_sleep_overshoot_rebases_from_actual_render_start():
+    clock = Clock()
+    sim, pacer, rendered, sleeps = make_pacer(clock, oversleep_s=0.010)
+    with pacer.step():
+        sim.render()
+        assert pacer.deadline == pytest.approx(rendered[-1] + 1 / 30)
+        sim.render()
+    assert sleeps == pytest.approx([1 / 30, 1 / 30])
+    assert rendered[-1] - rendered[-2] == pytest.approx(1 / 30 + 0.010)
+    pacer.close()
+
+
+def test_deadline_persists_across_commands_and_reset_anchors_fresh_step():
+    clock = Clock()
+    sim, pacer, rendered, sleeps = make_pacer(clock)
+    with pacer.step():
+        sim.render()
+    with pacer.step():
+        clock.now += 0.010
+        sim.render()
+    assert rendered == pytest.approx([1 / 30, 2 / 30])
+    pacer.reset()
+    clock.now += 10.0
+    sleeps.clear()
+    idle = clock.now
+    sim.render()  # READY/resume rendering must not initialize a deadline.
+    assert sleeps == [] and pacer.deadline is None
+    with pacer.step():
+        clock.now += 0.010
+        sim.render()
+    assert rendered[-1] == pytest.approx(idle + 1 / 30)
+    assert sleeps == pytest.approx([1 / 30 - 0.010])
+    pacer.close()
+
+
+def test_overloaded_commands_do_not_skip_physics_or_renders():
+    from robolab.core.omy_teleop.stepping import advance_physics
+
+    clock = Clock()
+    sim, pacer, rendered, sleeps = make_pacer(clock, render_s=0.021)
+    physics_calls, targets, updates = [], [], []
+
+    def physics_step(render):
+        physics_calls.append(render)
+        clock.now += 0.009
+
+    sim.has_gui = lambda: True
+    sim.has_rtx_sensors = lambda: False
+    sim.step = physics_step
+    env = SimpleNamespace(
+        sim=sim, _sim_step_counter=0, physics_dt=1 / 120, step_dt=1 / 15,
+        cfg=SimpleNamespace(decimation=8, sim=SimpleNamespace(render_interval=4)),
+        action_manager=SimpleNamespace(apply_action=lambda: targets.append("action")),
+        scene=SimpleNamespace(write_data_to_sim=lambda: targets.append("write"),
+                              update=lambda dt: updates.append(dt)),
+    )
+    for _ in range(3):
+        with pacer.step():
+            advance_physics(env, held_target=True)
+    assert sleeps == []
+    assert len(rendered) == 6 and physics_calls == [False] * 24
+    assert targets == ["action", "write"] * 3
+    assert updates == pytest.approx([1 / 15] * 3)
+    assert env._sim_step_counter * env.physics_dt == pytest.approx(3 / 15)
+    pacer.close()
+
+
+def test_render_exception_disables_pacing_and_close_restores_local_renderer():
+    clock = Clock()
+
+    def render():
+        raise ValueError("renderer failed")
+
+    sim = SimpleNamespace(render=render)
+    pacer = RenderPacer(sim, 1 / 30, clock=clock, sleep=lambda delay: setattr(clock, "now", clock.now + delay))
+    with pytest.raises(ValueError, match="renderer failed"):
+        with pacer.step():
+            sim.render()
+    assert not pacer.active
+    pacer.close()
+    pacer.close()
+    assert sim.render is render and pacer.deadline is None
+
+
+def test_pacer_waits_are_excluded_from_work_when_render_is_paced():
+    clock = Clock()
+    monitor = PerformanceMonitor(clock=clock)
+    sim, pacer, rendered, sleeps = make_pacer(clock, render_s=0.002, monitor=monitor)
+    monitor.begin_step()
+    with pacer.step():
+        clock.now += 0.010
+        sim.render()
+    monitor.end_step(work_end=clock.now)
+    summary = monitor.summary(1 / 15)
+    assert summary["region_ms_mean"]["pacing"] == pytest.approx((1 / 30 - 0.010) * 1000)
+    assert summary["work_ms_mean"] == pytest.approx(12)
+    assert summary["command_interval_ms_p50"] == pytest.approx((1 / 30 + 0.002) * 1000)
     pacer.close()

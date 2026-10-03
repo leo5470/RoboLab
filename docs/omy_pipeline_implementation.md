@@ -43,6 +43,41 @@ regressions, nine saved-grasp replays with equal settling horizons, and one
 84-frame-per-camera offline materialization. The headless cap-16 held-target
 path averaged 52.6 ms/command versus 62.5 ms for ordinary compact stepping.
 
+## XR deadline-pacing correction — 2026-10-03
+
+The shared OMY `RenderPacer` now anchors its first deadline at active-step entry,
+before physics work. It waits only when a render arrives early. A due or overdue
+render executes immediately, and its actual start anchors the next deadline.
+Slow rendering therefore does not acquire an additional full-period sleep, and
+recovery does not produce a catch-up burst. No physics steps, scheduled render
+calls, actions, or recorded samples are skipped.
+
+Both `teleop_omy_xr.py` and `collect_omy_xr.py` use the corrected helper. Startup,
+READY, reset, and XR-connection rendering remain unpaced. Existing reset/resume
+hooks clear the deadline, and pacing remains excluded from measured work while
+included in wall-clock rates. No new launch option is required.
+
+This correction is available in `/tmp2/leocheng/RoboLab` and the SSD checkout
+at `/home/leocheng/RoboLab`, both on branch `quest`. Launch options are unchanged.
+
+Validation: **199 pure unit checks passed**, including 30/60 Hz frame spacing,
+first-frame physics work, due/overdue recovery, slow renders, sleep overshoot,
+reset, exceptions, timing accounting, and a paced eight-substep physics-loop
+contract. Isolation checks verify that the OMY wrapper does not modify another
+simulator instance or its class, and standard Pi0-family evaluation, task
+registration, and shared environment code do not import the OMY scheduler.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" .venv/bin/python -m pytest \
+  --confcutdir=tests/unit tests/unit/test_omy*.py \
+  tests/unit/test_teleop_performance.py tests/unit/test_xr_view.py -q
+```
+
+No Isaac Sim/headset or physical leader was started for these checks. GPU/XR
+latency and grasp stability still need an operator retest; 15 Hz realtime is not
+guaranteed. Standard evaluation physics, cameras, task conditions, policy cadence,
+and scoring are unchanged. The full Pi0-family evaluation suite was not rerun.
+
 ## Remaining validation and work
 
 Headless contract tests do not establish XR head-tracking correctness, comfort,
