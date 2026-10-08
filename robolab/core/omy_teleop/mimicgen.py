@@ -149,6 +149,7 @@ def mimic_env_class():
                 num_envs=1, device=self.device,
             )
             self.mimic_max_joint_step = 0.0
+            self._mimic_commands = []
 
         def _mimic_eef(self):
             if not hasattr(self, "_mimic_ik"):
@@ -192,7 +193,23 @@ def mimic_env_class():
             self.mimic_max_joint_step = max(self.mimic_max_joint_step, delta.abs().max().item())
             arm = robot.data.default_joint_pos[env_id, self._mimic_arm_ids].clone()
             arm[self._mimic_ik_columns] = (current + delta)[0]
+            self._mimic_commands.append((pos, math_utils.quat_from_matrix(rot), arm))
             return torch.cat((arm, gripper_action_dict[EEF].reshape(1).to(arm))).unsqueeze(0)
+
+        def ik_errors(self):
+            """Largest position and rotation error of the joint commands since the last call.
+
+            Each command is compared with its target by forward kinematics, which moves the robot:
+            call this only between attempts.
+            """
+            positions, quats, arms = (torch.stack(rows) for rows in zip(*self._mimic_commands))
+            self._mimic_commands = []
+            joints = self.scene["robot"].data.joint_pos[:1].repeat(len(arms), 1)
+            joints[:, self._mimic_arm_ids] = arms
+            reached, rotation = math_utils.unmake_pose(self.fk(joints))
+            position_error, rotation_error = math_utils.compute_pose_error(
+                reached, math_utils.quat_from_matrix(rotation), positions, quats, rot_error_type="axis_angle")
+            return position_error.norm(dim=-1).max().item(), rotation_error.norm(dim=-1).max().item()
 
         def actions_to_gripper_actions(self, actions):
             return {EEF: actions[:, -1:]}
@@ -292,6 +309,7 @@ def run(args):
     from robolab.core.environments.factory import get_envs
     from robolab.core.environments.runtime import create_env
     from robolab.core.events.reset_pose import reset_pose_uniform
+    from robolab.core.events.subtask_recorder import SubtaskCompletionRecorderTerm
     from robolab.core.events.utils import merge_events_cfg
 
     from .config import ENV_POSTFIX, configure_performance, register_omy_envs, validate_environment
@@ -350,8 +368,11 @@ def run(args):
             env.reset(seed=args.seed)
             pool = DataGenInfoPool(env, cfg, env.device)
             sources = load_sources(env, pool, args.input, object_name, container_name, args.episodes)
+            robot = env.scene["robot"]
+            arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
             recorder.set_dataset_attrs({**source_attrs, "robolab_omy_mimicgen": json.dumps({
                 "schema_version": 1, "sources": sources, "seed": args.seed,
+                "joint_position_limits": robot.data.soft_joint_pos_limits[0, arm_ids].tolist(),
                 "object": object_name, "container": container_name,
                 "pose_range": None if args.no_randomize else pose_range,
                 "object_pose_range": None if args.no_randomize else object_pose_range,
@@ -361,10 +382,12 @@ def run(args):
             print(f"Task: {cfg.instruction}\nOutput: {output}\nSource demonstrations: {len(sources)}", flush=True)
             successes = 0
             settle_steps = round(args.settle_s / env.step_dt)
+            tracker = recorder.get_term(SubtaskCompletionRecorderTerm)
             while successes < args.num_demos and len(results) < args.max_attempts:
                 seed = args.seed + len(results)
                 env.reset(seed=seed)  # also exports or discards an unfinished attempt
-                recorder.set_episode_index(len(results) if args.keep_failed else successes, env_ids=[0])
+                index = len(results) if args.keep_failed else successes
+                recorder.set_episode_index(index, env_ids=[0])
                 recorder.set_episode_seed(seed, env_ids=[0])
                 boundaries = generator.randomize_subtask_boundaries()
                 selected, previous = {EEF: None}, {EEF: None}
@@ -388,7 +411,14 @@ def run(args):
                     steps += 1
                 succeeded = bool(env.all_terminated and env.get_env_results()[0]["success"])
                 successes += succeeded
-                results.append({"seed": seed, "success": succeeded, "steps": steps, "source": selected[EEF]})
+                # The attempt is over, so forward kinematics may move the robot. See quality.py for the consumers.
+                position_error, rotation_error = env.ik_errors()
+                results.append({"seed": seed, "success": succeeded, "steps": steps, "source": selected[EEF],
+                                "demo": f"demo_{index}" if succeeded or args.keep_failed else None,
+                                "ik_position_error_m": position_error, "ik_orientation_error_rad": rotation_error,
+                                "events": None if tracker is None else [
+                                    {key: event[key] for key in ("step", "name", "info")}
+                                    for event in tracker.get_events(0)]})
                 print(f"Attempt {len(results)}: {'success' if succeeded else 'failure'} after {steps} steps "
                       f"(source {selected[EEF]}); {successes}/{args.num_demos} generated.", flush=True)
             env.reset(seed=args.seed)
