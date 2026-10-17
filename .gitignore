@@ -21,6 +21,9 @@ debug/scripts/__pycache__/
 !debug/container_hulls/**
 docker-cache/
 
+# Local tests
+/tests/*
+
 # Documentation
 docs/superpowers/
 **/_source/
