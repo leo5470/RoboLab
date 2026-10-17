@@ -1,4 +1,4 @@
-"""Space-key episode control for the dedicated L100/XR collector."""
+"""F9-key episode control for the dedicated L100/XR collector."""
 
 import math
 import time
@@ -9,8 +9,11 @@ import numpy as np
 from .options import ARM_JOINTS
 
 
-class SpaceReset:
-    """Kit-window Space presses, consumed once by the simulation thread."""
+RESET_KEY = "F9"
+
+
+class EpisodeReset:
+    """Kit-window F9 presses, consumed once by the simulation thread."""
 
     def __init__(self):
         import carb.input
@@ -19,7 +22,7 @@ class SpaceReset:
         self._input = carb.input.acquire_input_interface()
         window = omni.appwindow.get_default_app_window()
         if window is None or window.get_keyboard() is None:
-            raise RuntimeError("Space reset requires a Kit window with keyboard input")
+            raise RuntimeError(f"{RESET_KEY} reset requires a Kit window with keyboard input")
         self._keyboard = window.get_keyboard()
         self._pressed = False
         self._pending = 0
@@ -28,7 +31,11 @@ class SpaceReset:
     def _on_event(self, event, *unused):
         import carb.input
 
-        if event.input.name in ("SPACE", "SPACEBAR"):
+        # Kit can supply either a KeyboardInput enum or a string key.
+        key = getattr(event.input, "name", event.input)
+        if isinstance(key, str):
+            key = key.upper()
+        if key == RESET_KEY:
             if event.type == carb.input.KeyboardEventType.KEY_PRESS and not self._pressed:
                 self._pending += 1
                 self._pressed = True
@@ -122,7 +129,7 @@ def build_parser():
     from .xr import build_parser as xr_parser
 
     parser = xr_parser()
-    parser.description = "Collect state-only L100/XR demonstrations; Space resets or confirms READY."
+    parser.description = f"Collect state-only L100/XR demonstrations; {RESET_KEY} resets or confirms READY."
     parser.set_defaults(record=True, save_failures=True, num_episodes=1000)
     parser.add_argument("--ready-tolerance-rad", type=float, default=0.12)
     parser.add_argument("--start-motion-rad", type=float, default=0.035)
@@ -143,7 +150,7 @@ def validate_args(parser, args):
     if args.stream or args.record_images or not args.record or not args.save_failures:
         parser.error("collection requires state-only recording with failed attempts retained")
     if args.headless:
-        parser.error("Space reset requires the Isaac Sim window; omit --headless")
+        parser.error(f"{RESET_KEY} reset requires the Isaac Sim window; omit --headless")
     if args.max_attempt_steps < 1:
         parser.error("--max-attempt-steps must be positive")
     if not math.isfinite(args.max_attempt_seconds) or args.max_attempt_seconds <= 0:
@@ -155,7 +162,7 @@ def validate_args(parser, args):
 
 
 def run(args, app, *, xr_session):
-    """Collect attempts with deliberate Space reset/confirm transitions."""
+    """Collect attempts with deliberate F9 reset/confirm transitions."""
     import json
     from pathlib import Path
 
@@ -225,13 +232,13 @@ def run(args, app, *, xr_session):
             recorder.set_flush_interval(0)
             recorder.set_dataset_attrs({"robolab_omy_collection": json.dumps({
                 "schema_version": 1, "start": "move_after_space_confirmed_ready",
-                "reset_key": "SPACE", "ready_tolerance_rad": args.ready_tolerance_rad,
+                "reset_key": RESET_KEY, "ready_tolerance_rad": args.ready_tolerance_rad,
                 "start_motion_rad": args.start_motion_rad, "ready_stable_s": args.ready_stable_s,
                 "images": "deferred", "recording": "state_only",
                 "max_attempt_steps": args.max_attempt_steps,
                 "max_attempt_seconds": args.max_attempt_seconds,
             })})
-            keyboard = SpaceReset()
+            keyboard = EpisodeReset()
             xr_session.start()
             env.reset(seed=args.seed)
             if not xr_session.wait_for_display(app, env.sim.render):
@@ -243,8 +250,8 @@ def run(args, app, *, xr_session):
                              movement_rad=args.start_motion_rad, stable_s=args.ready_stable_s)
             state = "waiting"
             print(f"Task: {cfg.instruction}\nOutput: {output}", flush=True)
-            print("Return L100 to READY, then press Space in the Isaac Sim window. "
-                  "Move L100 to start; press Space while recording to reset. Ctrl+C exits.", flush=True)
+            print(f"Return L100 to READY, then press {RESET_KEY} in the Isaac Sim window. "
+                  f"Move L100 to start; press {RESET_KEY} while recording to reset. Ctrl+C exits.", flush=True)
             events_path = Path(output) / "collection_events.jsonl"
 
             def event(kind, **fields):
@@ -294,7 +301,7 @@ def run(args, app, *, xr_session):
                 state = "waiting"
                 gate._near_since = None
                 gate._near_vector = None
-                print("Scene reset. Return L100 to READY, then press Space.", flush=True)
+                print(f"Scene reset. Return L100 to READY, then press {RESET_KEY}.", flush=True)
                 return True
 
             report_start = time.perf_counter()
@@ -326,12 +333,12 @@ def run(args, app, *, xr_session):
                                 event("armed")
                                 print("READY confirmed. Move L100 to start recording.", flush=True)
                             else:
-                                print("L100 is not steady at calibrated READY; adjust and press Space again.", flush=True)
+                                print(f"L100 is not steady at calibrated READY; adjust and press {RESET_KEY} again.", flush=True)
                     elif keyboard.take():
                         state = "waiting"
                         gate._near_since = None
                         gate._near_vector = None
-                        print("Arming cancelled. Press Space at READY.", flush=True)
+                        print(f"Arming cancelled. Press {RESET_KEY} at READY.", flush=True)
                     elif gate.moved():
                         recorder.set_episode_index(attempt, env_ids=[0])
                         recorder.set_episode_seed(args.seed, env_ids=[0])

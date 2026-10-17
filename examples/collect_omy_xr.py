@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""L100 + Quest collection with Space reset and deferred dataset images."""
+"""L100 + Quest collection with F9 reset and deferred dataset images."""
 
 import json
 import os
