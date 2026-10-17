@@ -4,6 +4,7 @@ Import after Isaac Sim starts. Control math remains upstream, with a local home 
 """
 
 import math
+import time
 
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
@@ -14,8 +15,10 @@ from isaaclab.utils import configclass
 from omy_leader_isaaclab.device import OmyLeaderCfg
 from scipy.spatial.transform import Rotation
 
-from robolab.constants import DEFAULT_TASK_SUBFOLDERS, TASK_DIR
-from robolab.core.environments.factory import auto_discover_and_create_cfgs
+from robolab.constants import TASK_DIR
+from robolab.core.environments.factory import create_env_cfg
+from robolab.core.task.task_index import normalize_task_dirs, resolve_selected_task
+from robolab.core.task.task_utils import load_task_from_file
 from robolab.core.observations.observation_utils import generate_image_obs_from_cameras, generate_obs_cfg
 from robolab.robots.droid import DroidCfg, ProprioceptionObservationCfg, WristCameraCfg, contact_gripper
 from robolab.variations.backgrounds import HomeOfficeBackgroundCfg
@@ -87,8 +90,26 @@ def _operator_wrist_camera():
 
 
 def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTFIX,
-                      optimized_observations=True):
+                      optimized_observations=True, task_dirs=None, resolution=None, expected_source=None):
     """Register dedicated task variants; never alter the standard DROID registrations."""
+    if resolution is None:
+        resolution = resolve_selected_task(task, task_dirs, task_root=TASK_DIR, expected_source=expected_source)
+    elif (resolution.class_name != task and "/" not in task and "\\" not in task and not task.endswith(".py")):
+        raise ValueError("Task name conflicts with its preflight resolution")
+    if task_dirs is not None and normalize_task_dirs(task_dirs) != resolution.task_dirs:
+        raise ValueError("Task directories conflict with their preflight resolution")
+    resolution.verify_expected_source(expected_source)
+    if resolution.class_name != task:
+        # Filename/path callers are accepted; consumers should use the returned
+        # canonical key rather than recording a machine-specific file path.
+        task = resolution.class_name
+    resolution.verify_current()
+    started = time.perf_counter()
+    task_class = load_task_from_file(str(resolution.task_file))
+    if task_class.__name__ != resolution.class_name:
+        raise ValueError(f"Resolved task {resolution.class_name!r} imported as {task_class.__name__!r}")
+    import_seconds = time.perf_counter() - started
+    started = time.perf_counter()
     @configclass
     class SelectedRobotCfg(OmyDroidCfg):
         wrist_cam = DroidCfg().wrist_cam if images else None
@@ -107,14 +128,19 @@ def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTF
         groups["image_obs"] = generate_image_obs_from_cameras([OverShoulderLeftCameraCfg, WristCameraCfg])()
     if stream:
         cameras.append(OmyOperatorCamerasCfg)
-    return auto_discover_and_create_cfgs(
-        task_dir=TASK_DIR, task_subdirs=DEFAULT_TASK_SUBFOLDERS, tasks=task, pattern="*.py",
+    cfg = create_env_cfg(
+        str(resolution.task_file), task_dir=TASK_DIR,
         env_postfix=env_postfix, observations_cfg=generate_obs_cfg(groups)(),
         actions_cfg=OmyDroidActionsCfg(), robot_cfg=SelectedRobotCfg, camera_cfg=cameras,
         lighting_cfg=SphereLightCfg, background_cfg=HomeOfficeBackgroundCfg,
         contact_gripper=contact_gripper, dt=1 / 120, decimation=2, render_interval=2, seed=1,
         eye=(-1.25, 0.0, 1.55), lookat=(0.55, 0.0, 0.05),
     )
+    print(f"OMY task registration: {task}; lookup={resolution.lookup_seconds * 1000:.1f} ms "
+          f"({resolution.method}), import={import_seconds * 1000:.1f} ms, "
+          f"config/register={(time.perf_counter() - started) * 1000:.1f} ms; "
+          "selected task modules=1", flush=True)
+    return {resolution.class_name: cfg}
 
 
 def configure_performance(env_cfg, args):

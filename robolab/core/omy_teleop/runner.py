@@ -47,6 +47,8 @@ def configure_recording(env, args, device_cfg, xr_session=None):
         "schema_version": 1,
         "upstream": upstream_metadata(),
         "task": args.task,
+        "task_dirs": list(args.task_dirs),
+        "task_source": args.task_resolution.metadata(),
         "action_type": "absolute_joint_position",
         "action_names": [*ARM_JOINTS, "gripper"],
         "joint_units": "rad",
@@ -160,7 +162,8 @@ def run(args, app, *, xr_session=None):
     # This flag also enables inexpensive proprioception recording without images.
     robolab.constants.RECORD_IMAGE_DATA = args.record
     register_omy_envs(args.task, images=args.record_images, stream=args.stream,
-                      optimized_observations=not args.reference_observations)
+                      optimized_observations=not args.reference_observations,
+                      task_dirs=args.task_dirs, resolution=args.task_resolution)
     names = [name for name in get_envs(task=args.task) if name.endswith(ENV_POSTFIX)]
     if len(names) != 1:
         raise ValueError(f"Expected one OMY task environment, found {names}")
@@ -187,7 +190,9 @@ def run(args, app, *, xr_session=None):
             from .environment import OmyEnv
 
             extra["env_class"] = OmyEnv
+        env_started = time.perf_counter()
         env, cfg = create_env(cfg, policy="omy_joint_position", rendering_mode=args.rendering_mode, **extra)
+        print(f"OMY environment startup: {time.perf_counter() - env_started:.3f} s", flush=True)
         joint_ids = validate_environment(env)
         if xr_session is not None:
             import carb

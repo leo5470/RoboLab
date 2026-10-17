@@ -20,6 +20,11 @@ def control_decimation(args):
 def build_parser(app_launcher=None, *, include_video=True, include_performance_profile=True):
     parser = argparse.ArgumentParser(description="OMY-L100 joint-space teleoperation of RoboLab DROID tasks.")
     parser.add_argument("--task", default="BananaInBowlTask")
+    from robolab.constants import DEFAULT_TASK_SUBFOLDERS
+
+    parser.add_argument("--task-dirs", "--task_dirs", nargs="+", default=list(DEFAULT_TASK_SUBFOLDERS),
+                        help="Task folders relative to robolab/tasks (default: benchmark). "
+                             "Uses manifest.json when present; imports only the selected task.")
     parser.add_argument("--source", choices=("serial", "tcp"), default="serial")
     parser.add_argument("--port", default="/dev/robotis_left")
     parser.add_argument("--baudrate", type=int, default=4_000_000)
@@ -121,6 +126,15 @@ def validate_args(parser, args):
             parser.error("--record-images requires --render-interval 2 (a fresh render before recording)")
         if args.stream and (control_decimation(args) * args.video_every) % args.render_interval:
             parser.error("--render-interval must divide control decimation * --video-every so capture follows a fresh render")
+
+    from robolab.core.task.task_index import resolve_selected_task
+
+    try:
+        args.task_resolution = resolve_selected_task(args.task, args.task_dirs)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+    args.task = args.task_resolution.class_name
+    args.task_dirs = list(args.task_resolution.task_dirs)
 
 
 def upstream_metadata():

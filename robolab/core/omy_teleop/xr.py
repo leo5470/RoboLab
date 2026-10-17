@@ -41,6 +41,10 @@ def preflight(args):
     report["robot_control"] = "omy_l100"
     report["calibration"] = str(Path(args.calib).resolve()) if args.calib else None
     report["source"] = args.source
+    if getattr(args, "task_resolution", None) is not None:
+        report["task"] = args.task
+        report["task_dirs"] = args.task_dirs
+        report["task_source"] = args.task_resolution.metadata()
     try:
         report["omy_version"] = importlib.metadata.version("omy-leader-isaaclab")
     except importlib.metadata.PackageNotFoundError:

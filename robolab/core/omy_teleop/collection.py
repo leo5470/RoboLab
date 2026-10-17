@@ -183,7 +183,8 @@ def run(args, app, *, xr_session):
         # the registered OMY variant has no image observations or cameras.
         robolab.constants.RECORD_IMAGE_DATA = True
         register_omy_envs(args.task, images=False, stream=False,
-                          optimized_observations=not args.reference_observations)
+                          optimized_observations=not args.reference_observations,
+                          task_dirs=args.task_dirs, resolution=args.task_resolution)
         names = [name for name in get_envs(task=args.task) if name.endswith(ENV_POSTFIX)]
         if len(names) != 1:
             raise ValueError(f"Expected one OMY task environment, found {names}")
@@ -202,8 +203,10 @@ def run(args, app, *, xr_session):
         attempt = 0
         settings = {}
         try:
+            env_started = time.perf_counter()
             env, cfg = create_env(cfg, policy="omy_joint_position", rendering_mode=args.rendering_mode,
                                   env_class=OmyEnv)
+            print(f"OMY environment startup: {time.perf_counter() - env_started:.3f} s", flush=True)
             joint_ids = validate_environment(env)
             import carb
 
