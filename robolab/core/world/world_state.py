@@ -127,7 +127,9 @@ class WorldState:
 
     def _omy_batch_contacts(self, body: str, force_threshold: float):
         """Return (boolean contact mask, object-name indices), or None to fall back."""
-        if getattr(self.env.cfg, "omy_contact_sensor_profile", "full") != "required":
+        enabled = getattr(self.env.cfg, "omy_batch_contacts_enabled",
+                          getattr(self.env.cfg, "omy_contact_sensor_profile", "full") == "required")
+        if not enabled:
             return None
         key = (body, force_threshold)
         if key in self._omy_batch_cache:
@@ -136,6 +138,7 @@ class WorldState:
         sensor = get_batch_contact_sensor(self.env.scene, body)
         if sensor is None:
             self._omy_batch_stats["fallback"] += 1
+            self._omy_batch_cache[key] = None
             return None
         labels = [name for name in self.env.cfg.contact_object_list
                   if name != "table" and hasattr(self.env.cfg.scene, name)]
@@ -149,6 +152,7 @@ class WorldState:
                 forces.shape[0] != self.env.num_envs or forces.shape[2] != len(paths) or \
                 forces.shape[-1] != 3:
             self._omy_batch_stats["fallback"] += 1
+            self._omy_batch_cache[key] = None
             return None
         indices = {name: paths.index(path) for name, path in zip(labels, expected)}
         mask = (torch.abs(forces) > force_threshold).any(dim=-1).any(dim=1)
@@ -156,6 +160,13 @@ class WorldState:
         self._omy_batch_cache[key] = result
         self._omy_batch_stats["computed"] += 1
         return result
+
+    def _omy_host_contacts(self, body, force_threshold, mask):
+        """One host read per boundary/threshold, instead of one per object."""
+        key = (body, force_threshold, "host")
+        if key not in self._omy_batch_cache:
+            self._omy_batch_cache[key] = mask.cpu()
+        return self._omy_batch_cache[key]
 
     def set_world(self, env: ManagerBasedRLEnv):
         if env != self.env:
@@ -343,7 +354,7 @@ class WorldState:
             raise ValueError(f"Object {body_name} is not an articulation")
         return body.data.joint_names
 
-    @boundary_cached
+    @boundary_cached(batched=True)
     def get_joint_positions(self, body_name: str, env_id: int | None = None) -> torch.Tensor:
         """Get current joint positions.
 
@@ -357,7 +368,7 @@ class WorldState:
             return body.data.joint_pos.clone().detach()
         return body.data.joint_pos[env_id].clone().detach()
 
-    @boundary_cached
+    @boundary_cached(batched=True)
     def get_joint_velocity(self, body_name: str, env_id: int | None = None) -> torch.Tensor:
         """Get current joint velocities.
 
@@ -445,7 +456,7 @@ class WorldState:
                 return prim
         raise ValueError(f"[WorldState] Prim at path '{prim_path}' not found in scene")
 
-    @boundary_cached
+    @boundary_cached(batched=True)
     def get_pose(self, body_name: str, is_relative: bool = True, as_matrix: bool = False, env_id: int | None = None) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         """Get pose in xyz, wxyz format.
 
@@ -527,7 +538,7 @@ class WorldState:
         else:
             return pos, quat
 
-    @boundary_cached
+    @boundary_cached(batched=True)
     def get_velocity(self, body_name: str, env_id: int | None = None) -> torch.Tensor:
         """Get velocity for a body. Returns zero velocity for XFormPrim extras.
 
@@ -647,6 +658,7 @@ class WorldState:
             return list(target)
         return [body]
 
+    @boundary_cached
     def in_contact(self, body1: str, body2: str, force_threshold: float = 0.1, env_id: int | None = None):
         """Check if two bodies are in contact.
 
@@ -663,6 +675,11 @@ class WorldState:
         ]
         if env_id is not None:
             return any(self._in_contact_pair(b1, b2, force_threshold, env_id) for b1, b2 in pairs)
+        if len(pairs) == 1 and getattr(self.env.cfg, "omy_batch_contacts_enabled",
+                                      getattr(self.env.cfg, "omy_contact_sensor_profile", "full") == "required"):
+            # A single concrete gripper needs no stack/OR reduction. Retain an
+            # owned result rather than exposing a writable view of the mask.
+            return self._in_contact_pair(*pairs[0], force_threshold, env_id).clone()
         results = [self._in_contact_pair(b1, b2, force_threshold, env_id) for b1, b2 in pairs]
         return torch.stack(results, dim=0).any(dim=0)  # (N,)
 
@@ -670,17 +687,22 @@ class WorldState:
         """Contact check for one concrete sensor pair (no alias resolution)."""
         grippers = getattr(self.env.cfg, "contact_gripper", {}) or {}
         if body1 in grippers and isinstance(grippers[body1], str):
+            batch_body = body1
             batch = self._omy_batch_contacts(body1, force_threshold)
             object_name = body2
         elif body2 in grippers and isinstance(grippers[body2], str):
+            batch_body = body2
             batch = self._omy_batch_contacts(body2, force_threshold)
             object_name = body1
         else:
             batch = None
             object_name = None
         if batch is not None and object_name in batch[1]:
+            if env_id is not None:
+                mask = self._omy_host_contacts(batch_body, force_threshold, batch[0])
+                return bool(mask[env_id, batch[1][object_name]].item())
             column = batch[0][:, batch[1][object_name]]
-            return bool(column[env_id].item()) if env_id is not None else column
+            return column
         contact_sensor = get_contact_sensor(self.env.scene, body1, body2)
         if env_id is not None:
             force_matrix = contact_sensor.data.force_matrix_w[env_id]
@@ -699,6 +721,7 @@ class WorldState:
             above = torch.abs(force_matrix) > force_threshold  # (N, B, M, 3)
             return above.any(dim=-1).any(dim=-1).any(dim=-1)   # (N,)
 
+    @boundary_cached
     def get_objects_in_contact_with(
         self,
         body: str,
@@ -731,7 +754,8 @@ class WorldState:
         batch = self._omy_batch_contacts(body, force_threshold)
         if batch is not None and all(name in batch[1] for name in candidates):
             mask, indices = batch
-            hits = mask[env_id, [indices[name] for name in candidates]].tolist()
+            host = self._omy_host_contacts(body, force_threshold, mask)
+            hits = host[env_id, [indices[name] for name in candidates]].tolist()
             return [name for name, hit in zip(candidates, hits) if hit]
         batch_sensor = get_batch_contact_sensor(self.env.scene, body)
 
@@ -764,6 +788,7 @@ class WorldState:
 
         return objects_in_contact
 
+    @boundary_cached
     def get_contact_force(self, body1: str, body2: str, env_id: int | None = None) -> torch.Tensor:
         """
         Get the contact force vector between two bodies.

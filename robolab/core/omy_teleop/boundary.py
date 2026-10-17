@@ -5,7 +5,20 @@ from contextlib import contextmanager
 from functools import wraps
 
 
-def boundary_cached(func):
+def _key(value):
+    if isinstance(value, list):
+        return (list, tuple(_key(item) for item in value))
+    if isinstance(value, tuple):
+        return (tuple, tuple(_key(item) for item in value))
+    if isinstance(value, dict):
+        return (dict, tuple(sorted((name, _key(item)) for name, item in value.items())))
+    hash(value)  # Non-value-like parameters must use the original query.
+    return value
+
+
+def boundary_cached(func=None, *, batched=False):
+    if func is None:
+        return lambda method: boundary_cached(method, batched=batched)
     signature = inspect.signature(func)
 
     @wraps(func)
@@ -15,10 +28,23 @@ def boundary_cached(func):
             return func(self, *args, **kwargs)
         arguments = signature.bind(self, *args, **kwargs)
         arguments.apply_defaults()
-        key = (func.__name__, tuple((name, value) for name, value in arguments.arguments.items() if name != "self"))
+        env_id = arguments.arguments.get("env_id")
+        # OMY admits one env. Its batched and indexed tensor getters are
+        # equivalent; sharing prevents duplicate pose/velocity GPU copies.
+        select = batched and isinstance(env_id, int) and getattr(getattr(self, "env", None), "num_envs", 0) == 1
+        if select:
+            arguments.arguments["env_id"] = None
+        try:
+            key = (func.__name__, tuple((name, _key(value)) for name, value in arguments.arguments.items()
+                                      if name != "self"))
+        except TypeError:
+            return func(self, *args, **kwargs)
         if key not in cache:
-            cache[key] = func(self, *args, **kwargs)
-        return cache[key]
+            cache[key] = func(*arguments.args, **arguments.kwargs)
+        value = cache[key]
+        if select:
+            return tuple(item[env_id] for item in value) if isinstance(value, tuple) else value[env_id]
+        return value
 
     return query
 

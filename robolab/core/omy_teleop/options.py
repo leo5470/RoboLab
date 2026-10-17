@@ -62,8 +62,8 @@ def build_parser(app_launcher=None, *, include_video=True, include_performance_p
     parser.add_argument("--contact-history-length", type=int, default=0,
                         help="OMY contact history (0: current forces only; 6: previous behavior).")
     parser.add_argument("--contact-sensors", choices=("full", "required"), default="required",
-                        help="required removes unused object-pair sensors for audited tasks; "
-                             "other tasks retain the full sensor set.")
+                        help="required derives used object-pair sensors from task consumers; "
+                             "unknown consumers retain the full set.")
     parser.add_argument("--render-interval", type=int,
                         help="Physics steps between renders; auto: 2*video-every for stream-only, otherwise 2.")
     parser.add_argument("--solver-position-iterations", type=int, choices=(16, 32),

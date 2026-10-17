@@ -30,6 +30,7 @@ from .options import ARM_JOINTS, control_decimation
 from . import observations as omy_observations
 from .performance import render_interval
 from .contact_profile import selected_contact_sensors
+from .requirements import build_task_requirements
 
 ENV_POSTFIX = "OMYL100"
 
@@ -166,7 +167,11 @@ def configure_performance(env_cfg, args):
         configure_compact_recording(env_cfg, args)
     contact_names = [name for name, sensor in vars(env_cfg.scene).items()
                      if isinstance(sensor, ContactSensorCfg) and "__" in name]
-    effective, retained = selected_contact_sensors(args.task, contact_names, args.contact_sensors)
+    requirements = build_task_requirements(env_cfg)
+    grippers = tuple(name for name, target in (env_cfg.contact_gripper or {}).items() if isinstance(target, str))
+    effective, retained = selected_contact_sensors(requirements, contact_names, args.contact_sensors,
+                                                 grippers=grippers)
+    env_cfg.omy_dependency_plan = requirements.report()
     env_cfg.omy_contact_sensor_profile = effective
     env_cfg.omy_contact_sensor_count_full = len(contact_names)
     env_cfg.omy_contact_sensor_count = len(retained)
@@ -175,7 +180,7 @@ def configure_performance(env_cfg, args):
             if name not in retained:
                 setattr(env_cfg.scene, name, None)
     elif args.contact_sensors == "required":
-        print(f"OMY contact sensors: {args.task} is not audited; keeping the full set.", flush=True)
+        print("OMY contact sensor fallback: " + "; ".join(requirements.unknown), flush=True)
     print(f"OMY contact sensors: {effective}, {len(retained)}/{len(contact_names)} retained.", flush=True)
     for name, sensor in vars(env_cfg.scene).items():
         if isinstance(sensor, ContactSensorCfg) and not sensor.track_air_time:

@@ -99,6 +99,8 @@ def performance_settings(env, args):
         "stepping_requested": getattr(args, "stepping_profile", "ordinary"),
         "stepping_effective": getattr(env.cfg, "omy_stepping_effective", "ordinary"),
         "stepping_fallback_reasons": getattr(env.cfg, "omy_stepping_fallback_reasons", []),
+        "capabilities": getattr(env.cfg, "omy_capabilities", {}),
+        "dependency_plan": getattr(env.cfg, "omy_dependency_plan", {}),
         "recording_profile": getattr(args, "recording_profile", "full"),
         "episode_buffer_bytes_limit": getattr(env.cfg, "omy_episode_buffer_bytes", None),
         "episode_max_steps": getattr(env.cfg, "omy_episode_max_steps", None),
@@ -120,7 +122,8 @@ def performance_settings(env, args):
 
 
 def contact_cache_stats(env):
-    if getattr(env.cfg, "omy_contact_sensor_profile", "full") != "required":
+    if not getattr(env.cfg, "omy_batch_contacts_enabled",
+                   getattr(env.cfg, "omy_contact_sensor_profile", "full") == "required"):
         return None
     from robolab.core.world.world_state import get_world
 

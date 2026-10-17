@@ -43,6 +43,7 @@ class BoundaryTimeRecorder(RecorderTerm):
             "source_read_monotonic_ns": torch.tensor([sample.get("read_monotonic_ns", -1)], dtype=torch.int64),
             "source_age_s": torch.tensor([sample.get("age_s") if valid else -1.0], dtype=torch.float64),
             "held_target": torch.tensor([getattr(self._env, "_omy_held_target", False)]),
+            "boundary_scene_updates": torch.tensor([getattr(self._env, "_omy_boundary_updates", False)]),
             "position_iteration_cap": torch.tensor([self._env.cfg.sim.physx.max_position_iteration_count]),
         }
 

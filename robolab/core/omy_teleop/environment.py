@@ -1,6 +1,7 @@
 """OMY environment with an opt-in Isaac Lab 2.2 manager stepping contract."""
 
 import logging
+from contextlib import nullcontext
 
 import torch
 
@@ -9,7 +10,7 @@ from robolab.core.world.world_state import get_world
 
 from .boundary import boundary_queries
 from .recording import OmyRecorderManager
-from .stepping import advance_physics, eligibility_reasons, runtime_reasons
+from .stepping import advance_physics, execution_plan, runtime_reasons
 
 logger = logging.getLogger(__name__)
 
@@ -20,42 +21,58 @@ class OmyEnv(RobolabEnv):
     def __init__(self, cfg, **kwargs):
         cfg.omy_account_early_terminations = True
         super().__init__(cfg, **kwargs)
-        requested = getattr(cfg, "omy_stepping_profile", "ordinary")
-        compact = getattr(cfg, "omy_recording_profile", "full") == "compact"
-        self._omy_audit = eligibility_reasons(self) if requested == "held-target" or compact else []
-        self._omy_compact_step = compact and not self._omy_audit
-        self._omy_held_target = requested == "held-target" and not self._omy_audit
-        cfg.omy_stepping_effective = "held-target" if self._omy_held_target else "ordinary"
-        cfg.omy_stepping_fallback_reasons = self._omy_audit if requested == "held-target" else []
+        self._omy_plan = execution_plan(self)
+        features = self._omy_plan["features"]
+        self._omy_compact_step = features["compact_observations"]
+        self._omy_held_target = features["held_targets"]
+        self._omy_boundary_updates = features["boundary_scene_updates"]
+        self._omy_query_cache = features["boundary_queries"]
+        # Verified batch queries also work with a full sensor profile. Unknown
+        # consumers keep ordinary queries, even if target holding is safe.
+        # All command/reset paths below invalidate this instance-local cache.
+        cfg.omy_batch_contacts_enabled = self._omy_query_cache
+        self._publish_omy_plan()
         cfg.omy_skip_duplicate_observations = self._omy_compact_step
-        if requested == "held-target" and self._omy_audit:
-            logger.warning("OMY held-target fallback: %s", "; ".join(self._omy_audit))
+        if getattr(cfg, "omy_stepping_profile", "ordinary") == "held-target":
+            for feature in ("held_targets", "boundary_scene_updates"):
+                if not features[feature]:
+                    logger.warning("OMY %s fallback: %s", feature,
+                                   "; ".join(self._omy_plan["fallback_reasons"][feature]))
+
+    def _publish_omy_plan(self):
+        self.cfg.omy_capabilities = self._omy_plan
+        self.cfg.omy_stepping_effective = "held-target" if self._omy_held_target else "ordinary"
+        requested = getattr(self.cfg, "omy_stepping_profile", "ordinary") == "held-target"
+        self.cfg.omy_stepping_fallback_reasons = (
+            self._omy_plan["fallback_reasons"]["held_targets"] if requested and not self._omy_held_target else []
+        )
 
     def step(self, action):
         if self.all_terminated:
             # A caller cannot admit another command to a finalized single-env episode.
             raise RuntimeError("OMY episode is finalized; reset and arm the next attempt before stepping")
-        if not self._omy_held_target and not self._omy_compact_step:
-            return super().step(action)
-        rejected = runtime_reasons(self)
+        world = get_world(self)
+        world.clear_contact_cache()
+        rejected = runtime_reasons(self) if self._omy_held_target or self._omy_boundary_updates else []
         if rejected:
-            # Switch the entire command to ordinary stepping before action processing.
-            self._omy_held_target = self._omy_compact_step = False
-            self.cfg.omy_stepping_effective = "ordinary"
-            self.cfg.omy_stepping_fallback_reasons = rejected
-            self.cfg.omy_skip_duplicate_observations = False
+            # Forces need resubmission/update every physics substep, but do not
+            # invalidate independent read-only queries or compact observations.
+            self._omy_held_target = self._omy_boundary_updates = False
+            for feature in ("held_targets", "boundary_scene_updates"):
+                self._omy_plan["features"][feature] = False
+                self._omy_plan["fallback_reasons"][feature] = rejected.copy()
+            self._publish_omy_plan()
             logger.warning("OMY stepping fallback: %s", "; ".join(rejected))
+        if not (self._omy_held_target or self._omy_compact_step or self._omy_query_cache):
             return super().step(action)
         self._has_stepped = True
         self._pre_step_frozen = self._frozen_envs.clone()
-        world = get_world(self)
-        world.clear_contact_cache()
         self.action_manager.process_action(action.to(self.device))
         self.recorder_manager.record_pre_step()
-        advance_physics(self, held_target=self._omy_held_target)
+        advance_physics(self, held_target=self._omy_held_target, boundary_updates=self._omy_boundary_updates)
         self.episode_length_buf += 1
         self.common_step_counter += 1
-        with boundary_queries(world):
+        with boundary_queries(world) if self._omy_query_cache else nullcontext():
             self.reset_buf = self.termination_manager.compute()
             self.reset_terminated = self.termination_manager.terminated
             self.reset_time_outs = self.termination_manager.time_outs
@@ -64,11 +81,19 @@ class OmyEnv(RobolabEnv):
             # pre-action obs comes from the previous boundary. Reuse read-only
             # world queries, while stepping each task state machine exactly once.
             if self.recorder_manager.active_terms:
+                if not self._omy_compact_step:
+                    # Non-compact recorders retain the upstream observation hook.
+                    self.obs_buf = self.observation_manager.compute()
                 self.recorder_manager.record_post_step()
         reset_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_ids):
             self.recorder_manager.record_pre_reset(reset_ids)
             self._reset_idx(reset_ids)
+            if not self._omy_compact_step:
+                self.scene.write_data_to_sim()
+                self.sim.forward()
+                if self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:
+                    self.sim.render()
             # Every terminal OMY env is frozen; no teleport or second target
             # submission is necessary on this command's finalization path.
             self.recorder_manager.record_post_reset(reset_ids)
