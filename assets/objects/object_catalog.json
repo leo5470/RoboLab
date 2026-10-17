@@ -2721,7 +2721,7 @@
   },
   {
     "name": "apple",
-    "usd_path": "assets/objects/objaverse/apple_02.usd",
+    "usd_path": "assets/objects/repaired/apple_02.usd",
     "prim_path": "/apple",
     "position": [
       0.0,
@@ -2735,7 +2735,7 @@
       0.0
     ],
     "payload": [],
-    "rigid_body": "UsdPhysics.RigidBodyAPI(Usd.Prim(</apple>))",
+    "rigid_body": true,
     "static_body": false,
     "class": "",
     "description": "",
@@ -2881,7 +2881,7 @@
   },
   {
     "name": "gregorys_coffee_cup",
-    "usd_path": "assets/objects/objaverse/gregorys_coffee_cup.usd",
+    "usd_path": "assets/objects/repaired/gregorys_coffee_cup.usd",
     "prim_path": "/gregorys_coffee_cup",
     "position": [
       0.0,
@@ -2895,7 +2895,7 @@
       0.0
     ],
     "payload": [],
-    "rigid_body": "UsdPhysics.RigidBodyAPI(Usd.Prim(</gregorys_coffee_cup>))",
+    "rigid_body": true,
     "static_body": false,
     "class": "",
     "description": "",
@@ -2913,7 +2913,7 @@
   },
   {
     "name": "lunchbag",
-    "usd_path": "assets/objects/objaverse/lunchbag.usd",
+    "usd_path": "assets/objects/repaired/lunchbag.usd",
     "prim_path": "/lunchbag",
     "position": [
       0.0,
@@ -2927,7 +2927,7 @@
       0.0
     ],
     "payload": [],
-    "rigid_body": "UsdPhysics.RigidBodyAPI(Usd.Prim(</lunchbag>))",
+    "rigid_body": true,
     "static_body": false,
     "class": "",
     "description": "",
@@ -2945,7 +2945,7 @@
   },
   {
     "name": "red_bell_pepper",
-    "usd_path": "assets/objects/objaverse/red_bell_pepper.usd",
+    "usd_path": "assets/objects/repaired/red_bell_pepper.usd",
     "prim_path": "/red_bell_pepper",
     "position": [
       0.0,
@@ -2959,7 +2959,7 @@
       0.0
     ],
     "payload": [],
-    "rigid_body": "UsdPhysics.RigidBodyAPI(Usd.Prim(</red_bell_pepper>))",
+    "rigid_body": true,
     "static_body": false,
     "class": "",
     "description": "",
@@ -2977,7 +2977,7 @@
   },
   {
     "name": "snickers_bar",
-    "usd_path": "assets/objects/objaverse/snickers_bar.usd",
+    "usd_path": "assets/objects/repaired/snickers_bar.usd",
     "prim_path": "/snickers_bar",
     "position": [
       0.0,
@@ -2991,7 +2991,7 @@
       0.0
     ],
     "payload": [],
-    "rigid_body": "UsdPhysics.RigidBodyAPI(Usd.Prim(</snickers_bar>))",
+    "rigid_body": true,
     "static_body": false,
     "class": "",
     "description": "",
