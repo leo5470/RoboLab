@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "provisional_example_not_approved",
+  "fps": 15,
+  "arm_joint_names": ["panda_joint1", "panda_joint2", "panda_joint3", "panda_joint4", "panda_joint5", "panda_joint6", "panda_joint7"],
+  "measured_gripper": {"source": "raw_finger_joint", "units": "rad"},
+  "gripper_command": {"encoding": "zero_one_closed"},
+  "cameras": {
+    "exterior_image_1_left": {"source": "obs/image_obs/over_shoulder_left_camera", "shape": [180, 320, 3], "dtype": "uint8", "color": "RGB"},
+    "wrist_image_left": {"source": "obs/image_obs/wrist_cam", "shape": [180, 320, 3], "dtype": "uint8", "color": "RGB"}
+  },
+  "pps": {
+    "revision": "a22f9adddc3ac9827dec38381c72b7d4e9390c5f",
+    "base_checkpoint": null,
+    "normalization": {"artifact": null, "sha256": null},
+    "proxies": {
+      "reference": {"config": null, "action_horizon": null},
+      "task": {"config": null, "action_horizon": null}
+    }
+  },
+  "lerobot": {"version": null, "api": "common_v2", "image_storage": "image", "finalize": null}
+}

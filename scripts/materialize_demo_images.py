@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Render camera observations for a state-only recording, offline.
 
-Keyboard demos collected with ``--defer-images`` hold actions and per-step scene
-states but no images, so teleoperation never waits on RTX renders. This script
+Keyboard demos collected with ``--defer-images`` and state-only OMY teleop or
+collection recordings hold actions and per-step scene states but no images.
+This script
 turns such a recording into an ordinary RoboLab image demonstration: it rebuilds
 the environment with its policy cameras, walks the recorded states, renders each
 one, and writes the observations under the usual ``obs/image_obs/<camera>``
@@ -31,7 +32,6 @@ overlaid onto a freshly built config so the scene matches what was recorded
 
 # isort: skip_file
 import argparse
-import json
 import os
 import shutil
 import sys
@@ -74,7 +74,20 @@ parser.add_argument(
     default=1.0,
     help="Scale policy-camera width and height (default: 1.0, the configured resolution).",
 )
+parser.add_argument("--camera-width", type=int,
+                    help="Explicit width for policy cameras; requires --camera-height. No implicit resize.")
+parser.add_argument("--camera-height", type=int,
+                    help="Explicit height for policy cameras; requires --camera-width. No implicit resize.")
 parser.add_argument("--task", help="Task class name. Default: the task named in the recording.")
+parser.add_argument("--task-dirs", "--task_dirs", nargs="+",
+                    help="OMY task folders relative to robolab/tasks. Defaults to recorded folders, "
+                         "or benchmark for older recordings; reads manifest.json automatically.")
+parser.add_argument(
+    "--require-native15",
+    action="store_true",
+    help="Require an OMY recording with verified native 15 Hz simulation timing. "
+         "Other recordings/rates are refused, never resampled or relabeled.",
+)
 parser.add_argument(
     "--record-viewport-camera",
     action=argparse.BooleanOptionalAction,
@@ -118,6 +131,47 @@ if args_cli.renders_per_frame < 1:
     parser.error("--renders-per-frame must be positive")
 if not 0 < args_cli.camera_scale <= 1:
     parser.error("--camera-scale must be greater than 0 and at most 1")
+if (args_cli.camera_width is None) != (args_cli.camera_height is None):
+    parser.error("--camera-width and --camera-height must be supplied together")
+if args_cli.camera_width is not None:
+    if args_cli.camera_width <= 0 or args_cli.camera_height <= 0:
+        parser.error("Explicit camera width/height must be positive")
+    if args_cli.camera_scale != 1.0:
+        parser.error("Use explicit camera width/height or --camera-scale, not both")
+
+# Only pure HDF5/metadata code runs here. A malformed OMY header or misaligned
+# native-15 episode must fail before initializing Isaac Sim, not after rendering
+# frames from an unrelated relative-IK environment.
+from robolab.core.omy_postprocess.cameras import (  # noqa: E402
+    preflight_omy_materialization,
+    resolved_asset_snapshot,
+    validated_frame_timestamps,
+    write_frame_mapping,
+)
+from robolab.core.omy_postprocess.io import sha256_file  # noqa: E402
+from robolab.core.task.task_index import normalize_task_dirs, resolve_selected_task  # noqa: E402
+
+omy_task_resolution = None
+try:
+    recording_metadata, omy_validation = preflight_omy_materialization(
+        args_cli.input, episodes=args_cli.episodes, task_override=args_cli.task,
+        require_native15=args_cli.require_native15,
+    )
+    if args_cli.require_native15 and not recording_metadata.get("omy_recording"):
+        parser.error("--require-native15 requires an OMY recording")
+    if recording_metadata.get("omy_recording"):
+        recorded_dirs = recording_metadata.get("task_dirs")
+        if (args_cli.task_dirs is not None and recorded_dirs is not None
+                and normalize_task_dirs(args_cli.task_dirs) != normalize_task_dirs(recorded_dirs)):
+            raise ValueError("--task-dirs conflicts with the recording's task directories")
+        omy_task_resolution = resolve_selected_task(
+            recording_metadata["task"], args_cli.task_dirs or recorded_dirs,
+            expected_source=recording_metadata.get("task_source"),
+        )
+    elif args_cli.task_dirs is not None:
+        parser.error("--task-dirs in this materializer is supported only for OMY recordings")
+except (ValueError, OSError) as exc:
+    parser.error(str(exc))
 
 # Cameras must render; the window is opt-in.
 args_cli.enable_cameras = True
@@ -142,7 +196,6 @@ from robolab.core.replay.materialize import (  # noqa: E402
     copy_episode,
     episode_names,
     materialize_episode,
-    read_deferred_metadata,
     restore_nulled_cameras,
     scale_camera_resolutions,
     stamp_materialization_provenance,
@@ -168,15 +221,6 @@ def _selected_episodes(available: list[str]) -> list[str]:
     return [name for name in available if name in selected]
 
 
-def _omy_collection_metadata(path: str) -> dict:
-    """Select the OMY absolute-joint camera variant for collection recordings."""
-    with h5py.File(path, "r") as file:
-        raw = file["data"].attrs.get("robolab_omy_collection")
-        if raw is None:
-            return {}
-        return json.loads(raw)
-
-
 def _build_env(metadata: dict):
     """Rebuild the recording's environment with its policy cameras restored.
 
@@ -195,10 +239,11 @@ def _build_env(metadata: dict):
     if viewport is None:
         viewport = bool(metadata.get("viewport_camera", False))
 
-    if metadata.get("omy_collection"):
+    if metadata.get("omy_recording"):
         from robolab.core.omy_teleop.config import ENV_POSTFIX, register_omy_envs
 
-        register_omy_envs(task, images=True, stream=False)
+        register_omy_envs(task, images=True, stream=False,
+                          task_dirs=omy_task_resolution.task_dirs, resolution=omy_task_resolution)
         expected_suffix = ENV_POSTFIX
     else:
         auto_register_droid_rel_ik_envs(
@@ -215,6 +260,8 @@ def _build_env(metadata: dict):
     recorded_env_name = metadata.get("env_name")
     env_name = recorded_env_name if recorded_env_name in env_names else env_names[0]
     if recorded_env_name and recorded_env_name != env_name:
+        if metadata.get("omy_recording"):
+            raise ValueError(f"Recorded OMY environment {recorded_env_name!r} is not registered")
         print(f"\033[93mNOTE: the recording names env '{recorded_env_name}', which is not "
               f"registered here; rendering with '{env_name}' instead.\033[0m")
 
@@ -228,6 +275,9 @@ def _build_env(metadata: dict):
 
     loaded = load_recorded_env_cfg(args_cli.input)
     if loaded is None:
+        if metadata.get("omy_recording"):
+            raise ValueError("OMY materialization requires the recording's env_cfg.json; "
+                             "refusing to silently substitute the current scene configuration")
         print(f"\033[93mWARNING: no env_cfg.json next to {args_cli.input}; rendering with the "
               "current repo's task definitions. If task or scene definitions changed since "
               "recording, the rendered scene is not the one that was recorded.\033[0m")
@@ -251,6 +301,11 @@ def _build_env(metadata: dict):
             "the rebuilt environment has no camera sensors, so there is nothing to render. "
             "Check that the task registers policy cameras."
         )
+    if args_cli.camera_width is not None:
+        for name in resolutions:
+            camera = getattr(env_cfg.scene, name)
+            camera.width, camera.height = args_cli.camera_width, args_cli.camera_height
+            resolutions[name] = (camera.width, camera.height)
     env, _ = create_env(
         env_cfg,
         policy="materialize_demo_images",
@@ -258,7 +313,11 @@ def _build_env(metadata: dict):
         rendering_mode=args_cli.rendering_mode,
     )
     print("Cameras: " + ", ".join(f"{name}={w}x{h}" for name, (w, h) in sorted(resolutions.items())))
-    return env, resolutions
+    asset_snapshot = resolved_asset_snapshot(env.cfg) if metadata.get("omy_recording") else {}
+    if asset_snapshot and not asset_snapshot["resolved_local_closure"]:
+        print("WARNING: some rendering asset dependencies are unresolved/unhashed; "
+              "the camera profile remains provisional.")
+    return env, resolutions, asset_snapshot
 
 
 def _describe(demo_group: h5py.Group) -> str:
@@ -286,19 +345,7 @@ def main() -> int:
     robolab.constants.VERBOSE = False
 
     warn_on_stack_mismatch(args_cli.input)
-    metadata = read_deferred_metadata(args_cli.input)
-    omy_metadata = _omy_collection_metadata(args_cli.input)
-    if omy_metadata:
-        with h5py.File(args_cli.input, "r") as file:
-            source = json.loads(file["data"].attrs["robolab_omy_teleop"])
-        metadata = {
-            "omy_collection": True,
-            "task": source["task"],
-            "control_hz": source["control_hz"],
-            "sim_dt": source["performance"]["physics_dt"],
-            "decimation": source["performance"]["decimation"],
-            "base_seed": 0,
-        }
+    metadata = recording_metadata
     if metadata:
         print(f"Recording: state-only, task '{metadata.get('task')}', "
               f"control {metadata.get('control_hz', float('nan')):.1f} Hz "
@@ -318,7 +365,7 @@ def main() -> int:
     env = None
     materialized = 0
     try:
-        env, resolutions = _build_env(metadata)
+        env, resolutions, asset_snapshot = _build_env(metadata)
         env.reset()
 
         # The output is built beside its destination and moved into place only
@@ -326,12 +373,16 @@ def main() -> int:
         # leaves a half-rendered demonstration behind.
         with h5py.File(args_cli.input, "r") as src, \
                 atomic_hdf5_output(args_cli.output, overwrite=args_cli.overwrite) as dst:
+            if metadata.get("omy_recording"):
+                for key, value in src.attrs.items():
+                    dst.attrs[key] = value
             src_data = src["data"]
             dst_data = dst.create_group("data")
             for key, value in src_data.attrs.items():
                 dst_data.attrs[key] = value
 
             total_samples = 0
+            validation_by_group = {item["group"]: item for item in omy_validation.get("episodes", [])}
             for name in selected:
                 episode = RecordedEpisode.load(src_data[name])
                 recorded_samples = int(src_data[name].attrs.get("num_samples", episode.num_actions))
@@ -349,16 +400,36 @@ def main() -> int:
 
                 demo = copy_episode(src_data[name], dst_data, name)
                 progress = tqdm(total=episode.num_actions, desc=f"{name} frames", unit="frame")
+
+                def on_frame(step):
+                    progress.update(1)
+                    if metadata.get("omy_recording") and step == 0:
+                        # A wrist camera moves with the robot. Its initial
+                        # extrinsics must be captured at frame zero, not from
+                        # the final restored pose after the rendering loop.
+                        write_camera_extrinsics(demo, camera_extrinsics_from_env(env))
+
                 try:
                     shapes = materialize_episode(
                         env, episode, demo,
                         compression=compression,
                         renders_per_frame=args_cli.renders_per_frame,
-                        progress=lambda _step: progress.update(1),
+                        progress=on_frame,
                     )
                 finally:
                     progress.close()
-                write_camera_extrinsics(demo, camera_extrinsics_from_env(env))
+                if not metadata.get("omy_recording"):
+                    write_camera_extrinsics(demo, camera_extrinsics_from_env(env))
+                if metadata.get("omy_recording"):
+                    # Native-15 timestamps come from verified simulated-time
+                    # validation, never from the wall clock or an FPS setting.
+                    timestamps = validated_frame_timestamps(metadata, validation_by_group[f"data/{name}"])
+                    write_frame_mapping(
+                        demo, source_episode=name,
+                        source_sha256=omy_validation["source"]["sha256"],
+                        validated_timestamps=timestamps,
+                        control_hz=metadata["control_hz"],
+                    )
                 demo.attrs["num_samples"] = episode.num_actions
                 total_samples += episode.num_actions
                 materialized += 1
@@ -379,8 +450,23 @@ def main() -> int:
                     "camera_resolutions": {name: list(res) for name, res in resolutions.items()},
                     "renders_per_frame": args_cli.renders_per_frame,
                     "image_groups": list(IMAGE_OBS_GROUPS),
+                    "observation_alignment": "pre_action",
+                    "alignment": "pre_action",
+                    "camera_scale": args_cli.camera_scale,
+                    "explicit_camera_resolution": ([args_cli.camera_width, args_cli.camera_height]
+                                                   if args_cli.camera_width is not None else None),
+                    "renderer": args_cli.renderer,
+                    "omy_recording": bool(metadata.get("omy_recording")),
+                    "source_sha256": omy_validation.get("source", {}).get("sha256"),
+                    "camera_profile_status": "provisional" if metadata.get("omy_recording") else "legacy",
+                    "asset_dependencies": asset_snapshot,
+                    "task_dirs": list(omy_task_resolution.task_dirs) if omy_task_resolution else None,
+                    "selected_task_source": omy_task_resolution.metadata() if omy_task_resolution else None,
+                    "recorded_task_source_verified": bool(metadata.get("task_source")),
                 },
             )
+            if metadata.get("omy_recording") and sha256_file(args_cli.input) != omy_validation["source"]["sha256"]:
+                raise ValueError("OMY source changed during camera materialization; output not published")
 
         print(f"\nWrote {materialized} materialized episode(s) to {args_cli.output}")
 
