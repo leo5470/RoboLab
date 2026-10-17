@@ -55,6 +55,34 @@ omy-leader-calib --gripper-only --out omy_calib_robolab.json
 
 ## Run with a local leader
 
+### Select a task folder without importing unrelated tasks
+
+OMY supports the evaluation CLI spelling `--task-dirs` (alias `--task_dirs`).
+Folders are relative to `robolab/tasks`; the default remains `benchmark`.
+For generated tasks, use e.g. `--task-dirs single_pnp --task SimplePnp064ComputerMouse02Task`.
+The runner reads that folder's `manifest.json`, validates the selected file and
+class, and imports only that task. Folders without a manifest use static Python
+declaration lookup, not task execution. Multiple folders are accepted, but
+ambiguous matches are refused. A manifest-backed folder's task list is
+authoritative; regenerate its manifest after adding or renaming a task.
+
+The active `single_pnp` pack comes from
+`origin/datasets/simple-pnp-launch-filtered-20261017` at commit `71ec4d2c`.
+Use its 6,754 retained task/scene pairs and committed manifests as the source of
+truth. The previous local set had 7,200 layouts; origin excludes 446, including
+computer-mouse layout `00`. Layout `02` in the examples is retained. See
+`robolab/tasks/single_pnp/README.md` and `exclusions.json` for filtering details.
+
+Lookup happens before SimulationApp startup. Logs report lookup, selected-task
+import, configuration registration, and environment startup separately. This
+does not change task settings, physics, control timing, or default policy
+evaluation registrations. No `python -c` folder workaround is needed.
+
+Recordings retain the canonical task name plus the selected directories and a
+portable task-file path/SHA-256. Offline image rendering reuses that selection
+and refuses a changed task definition. Older recordings without these optional
+fields remain supported and default to the benchmark folder.
+
 ```bash
 python examples/teleop_omy.py \
   --task BananaInBowlTask \
@@ -192,14 +220,15 @@ The four OMY-only changes are:
    changed by this pacing adjustment. An explicit
    `--kit_args="--/app/runLoops/main/rateLimitEnabled=true"` can override it.
 
-For audited OMY task variants, `--contact-sensors required` (default) also
-omits object-pair sensors that the task does not query. This retains 6 of 7
-BananaInBowl sensors and 16 of 79 AnimalsInBin sensors, including all gripper
-sensors. `--contact-sensors full` restores the original set for A/B comparison;
-unknown tasks always use the full set. The required profile reuses a validated
-gripper batch sensor for contact checks within a step and falls back to the
-individual pair sensors if its filter layout differs. It does not remove
-colliders or change physics. The comparison procedure is in
+`--contact-sensors required` (default) derives used pairs from the task's
+termination/subtask functions and observation/recorder/event consumers, rather
+than its name. All gripper/distractor sensors and required force-vector pairs
+are retained. Unknown consumers retain the full set; `--contact-sensors full`
+restores it explicitly for A/B comparison. Validated batch contact queries
+fall back to individual sensors if the PhysX filter layout differs. Held-target
+and compact-loop capabilities have independent checks and are logged per feature.
+Neither sensor pruning nor query reuse removes colliders or changes physics.
+The comparison procedure is in
 [the XR collection guide](omy_xr_collection.md).
 
 For the earlier CUDA simulation settings, with the new telemetry only:

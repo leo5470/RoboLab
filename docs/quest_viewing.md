@@ -147,6 +147,10 @@ the saved READY pose, with the trigger released, while the scene loads:
 ```
 
 The existing `omy_calib_robolab.json` is also the default for this entry point.
+For generated tasks, use `--task-dirs single_pnp --task SimplePnp064ComputerMouse02Task`.
+The OMY launchers read that folder's `manifest.json` and import only the selected
+task; no global folder changes or `python -c` wrapper are needed. The default
+folder remains `benchmark`. Missing or ambiguous tasks fail before Sim starts.
 It preserves the calibrated joint directions, READY offsets, corrected wrist
 rotation and trigger endpoints. No new calibration is captured unless you
 explicitly supply `--auto-zero`. The robot still starts at DROID's task pose.
