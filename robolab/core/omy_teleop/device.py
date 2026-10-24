@@ -1,4 +1,4 @@
-"""Home-pose adapter; input, joint mapping and limiting stay upstream.
+"""Home-pose and encoder-turn adapter; joint mapping and limiting stay upstream.
 
 Import after Isaac Sim starts. Upstream defaults to its cube demo's Panda home;
 RoboLab supplies the selected DROID environment's actual reset joint positions.
@@ -14,7 +14,8 @@ from omy_leader_isaaclab.device import OmyLeaderCfg, OmyLeaderDevice
 from omy_leader_isaaclab.franka_config import FRANKA_HOME
 from omy_leader_isaaclab.franka_retarget import OmyToFrankaRetarget
 
-from .calibration import recenter_direct, validate_home
+from .calibration import DirectWristTurnReference, recenter_direct, validate_home
+from .leader_state import LEADER_JOINT_NAMES
 
 
 @dataclass
@@ -32,6 +33,11 @@ class RoboLabOmyLeaderDevice(OmyLeaderDevice):
         super()._open_source()
         latest = self._latest
         self.last_input_sample = None
+        self._wrist_reference = (
+            DirectWristTurnReference(self._mapper.config)
+            if self.cfg.source == "serial" and self.cfg.calib_path and not self.cfg.auto_zero
+            and self._mapper.config.wrist_mode == "direct" else None
+        )
 
         def capture():
             # The serial reader replaces the tuple atomically. Read it once so
@@ -51,6 +57,21 @@ class RoboLabOmyLeaderDevice(OmyLeaderDevice):
             }
             if self.last_input_sample["stale"]:
                 return None, math.inf
+            # Own the exact source values before any wrist/calibration transform.
+            # Do not poll again: the background reader may already have advanced.
+            self.last_input_sample.update(
+                raw_joint_position=tuple(float(reading[f"{name}.pos"]) for name in LEADER_JOINT_NAMES),
+                raw_gripper_position=float(reading["gripper.pos"]),
+                wrist_turn_offset_rad=0.0,
+            )
+            if self._wrist_reference is not None:
+                first_sample = self._wrist_reference.offset_rad is None
+                reading = self._wrist_reference.normalize(reading)
+                offset = self._wrist_reference.offset_rad
+                self.last_input_sample["wrist_turn_offset_rad"] = offset
+                if first_sample and offset:
+                    print(f"[omy_leader] joint_6 encoder reference: subtracting {math.degrees(offset):+.0f} deg "
+                          "from source readings for this session (whole revolutions only).", flush=True)
             return reading, age
 
         self._latest = capture

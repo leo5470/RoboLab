@@ -1,6 +1,7 @@
 """OMY compact raw contract, using the ordinary recorder lifecycle and HDF5 writer."""
 
 import math
+import json
 import time
 
 import torch
@@ -18,6 +19,7 @@ from robolab.core.events.subtask_recorder import SubtaskCompletionRecorderCfg
 from robolab.core.logging.recorder_manager import RobolabRecorderManager
 
 from .buffers import EpisodeStorage
+from .leader_state import leader_state_tensors
 
 
 def admitted_steps(args, step_dt):
@@ -59,6 +61,16 @@ class BoundaryTimeRecorderCfg(RecorderTermCfg):
     class_type: type[RecorderTerm] = BoundaryTimeRecorder
 
 
+class LeaderStateRecorder(RecorderTerm):
+    def record_pre_step(self):
+        return "leader", leader_state_tensors(getattr(self._env, "omy_input_sample", None))
+
+
+@configclass
+class LeaderStateRecorderCfg(RecorderTermCfg):
+    class_type: type[RecorderTerm] = LeaderStateRecorder
+
+
 @configclass
 class CompactRecorderCfg(RecorderManagerBaseCfg):
     record_initial_state = InitialStateRecorderCfg()
@@ -67,6 +79,7 @@ class CompactRecorderCfg(RecorderManagerBaseCfg):
     record_policy_observations = PreStepFlatPolicyObservationsRecorderCfg()
     record_subtask_completion = None
     record_timing = BoundaryTimeRecorderCfg()
+    record_leader = LeaderStateRecorderCfg()
     export_in_record_pre_reset = False
 
 
@@ -136,6 +149,9 @@ class OmyRecorderManager(RobolabRecorderManager):
                     if isinstance(term, BoundaryTimeRecorder):
                         for key, tree in (term.record_pre_step(), term.record_post_step()):
                             reserve_tree(key, tree)
+                    elif isinstance(term, LeaderStateRecorder):
+                        key, tree = term.record_pre_step()
+                        reserve_tree(key, tree)
                 if "record_subtask_completion" in self._terms:
                     for name, dtype in (("status", torch.uint16), ("completed", torch.uint8), ("score", torch.float32)):
                         episode.buffer.reserve(f"subtask/{name}", torch.tensor(0, dtype=dtype, device=self._env.device))
@@ -146,8 +162,23 @@ class OmyRecorderManager(RobolabRecorderManager):
         if not pending:
             return
         allocated = sum(getattr(getattr(ep, "buffer", None), "allocated_bytes", 0) for ep in self._episodes.values())
+        prepared = {eid: (index, self._preparation_reports[eid])
+                    for eid, index in getattr(self, "_current_episode_index", {}).items()
+                    if index is not None and eid in getattr(self, "_preparation_reports", {})
+                    and (env_ids is None or eid in env_ids)}
         started = time.perf_counter()
         super().export_episodes(env_ids)
+        for eid, (index, report) in prepared.items():
+            self._dataset_file_handler.set_episode_attrs(index, {"omy_preparation": json.dumps(report, allow_nan=False)})
+            self._preparation_reports.pop(eid, None)
         self.export_timings.append({"allocated_bytes": allocated, "export_ms": 1000 * (time.perf_counter() - started)})
         # One record per bounded attempt; the collector persists these at boundaries.
         self.export_timings[:] = self.export_timings[-1:]
+
+    def set_episode_preparation(self, report, env_ids=None):
+        if env_ids is None:
+            env_ids = list(range(self._env.num_envs))
+        if not hasattr(self, "_preparation_reports"):
+            self._preparation_reports = {}
+        for env_id in env_ids:
+            self._preparation_reports[env_id] = report

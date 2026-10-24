@@ -23,6 +23,7 @@ docker-cache/
 
 # Local tests
 /tests/*
+!/tests/test_resting_in_container.py
 
 # Documentation
 docs/superpowers/

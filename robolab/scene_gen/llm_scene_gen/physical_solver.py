@@ -12,6 +12,7 @@ import numpy as np
 import random
 import math
 from typing import Optional, Any
+from robolab.core.scenes.placement import asset_local_bounds, bounds_corners, supported_root_height
 from .predicates import (
     ObjectState,
     PhysicalPredicate,
@@ -63,6 +64,13 @@ class PhysicalSolver:
         """
         if object_metadata is None:
             object_metadata = {}
+        self._placement_metadata = {name: dict(value) for name, value in object_metadata.items()}
+        if self.simulation_app is not None:
+            for name, path in object_paths.items():
+                item = self._placement_metadata.setdefault(name, {})
+                if "local_bounds" not in item:
+                    item["local_bounds"] = asset_local_bounds(path)
+        object_metadata = self._placement_metadata
 
         # Group predicates by type
         place_on_predicates = []
@@ -408,16 +416,30 @@ class PhysicalSolver:
         if support_z_top is None:
             return False
 
-        obj_state.z = support_z_top + obj_dims[2] / 2 + 0.001  # Small gap
-
         if obj_state.pitch is None:
             obj_state.pitch = 0.0
         if obj_state.roll is None:
             obj_state.roll = 0.0
 
+        obj_state.z = self._root_on_support(obj_state, obj_dims, support_z_top)
+
         obj_state.is_placed = True
         self.placed_objects.append(obj_state.name)
         return True
+
+    def _root_on_support(self, state, dims, surface_z):
+        metadata = getattr(self, "_placement_metadata", {}).get(state.name, {})
+        corners = self._placement_corners(state, dims, metadata)
+        return supported_root_height(0, float(corners[:, 2].min()), surface_z, 0.001)
+
+    @staticmethod
+    def _placement_corners(state, dims, metadata):
+        bounds = metadata.get("local_bounds", {"lower": [-v / 2 for v in dims], "upper": [v / 2 for v in dims]})
+        yaw, pitch, roll = (math.radians(v or 0) / 2 for v in (state.yaw, state.pitch, state.roll))
+        cy, sy, cp, sp, cr, sr = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch), math.cos(roll), math.sin(roll)
+        quat = [cr*cp*cy+sr*sp*sy, sr*cp*cy-cr*sp*sy, cr*sp*cy+sr*cp*sy, cr*cp*sy-sr*sp*cy]
+        return bounds_corners(bounds["lower"], bounds["upper"], [0, 0, 0, *quat],
+                              metadata.get("scale", bounds.get("scale", (1, 1, 1))))
 
     def _support_surface_z(
         self,
@@ -426,6 +448,15 @@ class PhysicalSolver:
         pred: PlaceOnPredicate,
         support_metadata: dict[str, Any],
     ) -> Optional[float]:
+        if support_metadata.get("local_bounds") is not None:
+            corners = self._placement_corners(support_state, support_dims, support_metadata)
+            bottom, top = float(corners[:, 2].min()), float(corners[:, 2].max())
+            root = support_state.z if support_state.z is not None else -bottom
+            if pred.shelf_level is None:
+                return root + top
+            levels = support_metadata.get("shelf_levels") or []
+            index = int(pred.shelf_level)
+            return root + bottom + float(levels[index]) if 0 <= index < len(levels) else None
         if pred.shelf_level is not None:
             levels = support_metadata.get("shelf_levels") or []
             try:
@@ -944,7 +975,7 @@ class PhysicalSolver:
 
         # Place on table surface
         if obj_state.z is None:
-            obj_state.z = obj_dims[2] / 2 + 0.001
+            obj_state.z = self._root_on_support(obj_state, obj_dims, 0.0)
 
         if obj_state.yaw is None:
             obj_state.yaw = random.uniform(0, 360)

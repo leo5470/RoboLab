@@ -82,6 +82,37 @@ Use the dedicated [OMY-L100 teleoperation runner](docs/omy_teleoperation.md) to 
 DROID tasks with the upstream OMY-to-Franka joint-space implementation, record
 demonstrations, and optionally stream an operator view over TCP.
 
+For Quest/XR demonstration collection, use the [collection launcher](docs/omy_xr_collection.md):
+
+```bash
+./scripts/collect_omy_xr.sh --object milkjug_a01 --num-episodes 10 \
+  --postprocess-skip-failed --postprocess-preview-videos --log
+```
+
+This collects 10 successes across different layouts, one success per layout by
+default. In object mode, `--num-episodes` limits total successes;
+`--episodes-per-layout` controls successes per layout. Omit `--num-episodes` to
+collect every retained layout.
+
+New sessions settle the scene before READY and record the settled initial state.
+F9 confirms READY or retries an attempt; F12 skips a layout. After the success
+quota or graceful Ctrl+C, the launcher validates and packages the recordings,
+then renders both policy cameras with one persistent Isaac process. The flags
+above select successful attempts for postprocessing and generate 15 FPS review
+videos; raw unsuccessful attempts are saved.
+
+The default is collection/XR on physical **GPU 0** and isolated postprocessing on
+physical **GPU 1**, so another collection can run in a separate terminal. Offline
+rendering requires Linux, `nvidia-smi`, bubblewrap (`sudo apt install bubblewrap`),
+and working user/mount namespaces. On a single-GPU machine, set
+`--postprocess-device cuda:0`. Use `--no-postprocess` to collect only.
+
+The terminal prints the absolute dataset, manifest, report, and optional video
+locations under `SESSION/postprocess/RUN_ID/`. See the
+[collection guide](docs/omy_xr_collection.md) for preparation controls and resume,
+and the [postprocessing guide](docs/omy_postprocessing.md) for retries, worker
+diagnostics, verification videos, and benchmarks.
+
 ### Run with a policy
 
 RoboLab uses a **server-client architecture**: your model runs as a standalone server, and RoboLab connects to it via a lightweight inference client. To quickly test RoboLab, try [Pi0.5 via OpenPI](policies/pi0_family/README.md).

@@ -36,7 +36,7 @@ def build_parser():
     render.add_argument("--output", required=True, type=Path, help="New per-attempt render cache directory")
     render.add_argument("--episode", type=int, default=0)
     render.add_argument("--python", type=Path, help="Known-working Isaac Lab interpreter; defaults to current interpreter")
-    render.add_argument("--device", default="cuda:0")
+    render.add_argument("--device", default="cuda:0", help="Isolated host GPU in nvidia-smi order")
     render.add_argument("--renderer", choices=("realtime", "pathtracing"), default="realtime")
     render.add_argument("--camera-scale", type=float, default=1.0)
     render.add_argument("--camera-width", type=int)

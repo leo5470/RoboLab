@@ -13,8 +13,9 @@ All @atomic conditionals support env_id parameter:
   env_id=<int>          → returns bool (used by ConditionalsStateMachine)
 """
 
+import math
 from functools import partial
-from typing import Literal, Optional, Union
+from typing import Callable, Literal, Optional, Union
 
 import torch
 
@@ -35,13 +36,16 @@ def pick_and_place(
     container: str,
     logical: Literal["all", "any", "choose"] = "all",
     K: Optional[int] = None,
-    score: float = 1.0
+    score: float = 1.0,
+    *,
+    placement_func: Callable | None = None,
+    placement_params: dict | None = None,
 ) -> Subtask:
     """
     A composite subtask that picks up object(s) and places them in a container.
 
     This function creates parallel subtask sequences for each specified object, where each
-    object independently progresses through: grab → lift → move → drop → verify placement.
+    object independently progresses through: grab → verify placement.
     The completion logic determines when the entire group is considered complete.
 
     Args:
@@ -51,19 +55,30 @@ def pick_and_place(
             - "all": All objects must complete their subtasks (default)
             - "any": Success when any single object completes
             - "choose": Success when exactly k objects complete (requires k parameter)
-        k: Number of objects that must complete when logical="choose"
+        K: Number of objects that must complete when logical="choose"
         score: Overall score weight for this subtask group (default: 1.0)
+        placement_func: Atomic placement check. Defaults to object_in_container;
+            use object_resting_in_container to wait for an observed settled placement.
+        placement_params: Extra parameters passed to the placement check, excluding
+            object and container. Use the same parameters as the success termination.
     """
     if isinstance(object, str):
         objects = [object]
     else:
         objects = list(object)
 
+    if placement_func is None:
+        placement_func = object_in_container
+        params = {"require_contact_with": False, "require_gripper_detached": True}
+    else:
+        params = {}
+    params.update(placement_params or {})
+
     conditions = {}
     for obj in objects:
         conditions[obj] = [
             (partial(object_grabbed, object=obj), 0.0),
-            (partial(object_in_container, object=obj, container=container, require_contact_with=False, require_gripper_detached=True), score),
+            (partial(placement_func, object=obj, container=container, **params), score),
         ]
 
     return Subtask(name="pick_and_place", conditions=conditions, logical=logical, score=score, K=K)
@@ -286,11 +301,11 @@ def object_in_container(
 ):
     """Checks if objects are in an open-top container.
 
-    Geometric check: the object's centroid is transformed into the container's local
-    frame and bounds-checked against the container's local AABB (with one
-    container-height of open-top slack along the container's local +z). Because the
-    check is performed in the container's coordinates, the predicate is invariant to
-    container orientation — a flipped or tipped container correctly fails.
+    The object's hull-vertex centroid is transformed into the container's local
+    frame and tested against its convex hull with the top faces removed. This
+    includes the air column above the opening. Optional stationary checking uses
+    linear velocity at the current step only; object_resting_in_container also
+    checks angular motion, support, release, and an observed settling interval.
     """
     def condition(world, obj, env_id=None):
         result = in_opentop_container(
@@ -312,6 +327,204 @@ def object_in_container(
     if robolab.constants.DEBUG:
         print(f"object_in_container: {object} in '{container}' (tol={tolerance}, logical={logical}) -> {result}")
     return result
+
+def _condition_held_for_time(world, current, *, key, duration_s, positions, orientations,
+                             position_tolerance, rotation_tolerance_deg, env_id=None):
+    """Require a condition and stable poses over consecutive observed steps.
+
+    Terminations and the subtask recorder may evaluate the same condition in the
+    same step (batched or scalar). Episode-step timestamps make these calls
+    idempotent: additional evaluations never advance the settling clock. A gap
+    in observations restarts the window rather than assuming unobserved rest.
+    """
+    env = world.env
+    required_steps = math.ceil(duration_s / env.step_dt - 1e-9)
+
+    def make_state():
+        since = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
+        last = torch.full_like(since, -1)
+        anchor_pos = torch.zeros((env.num_envs, 2, 3), device=env.device)
+        anchor_quat = torch.zeros((env.num_envs, 2, 4), device=env.device)
+
+        def reset(env_ids):
+            since[env_ids] = -1
+            last[env_ids] = -1
+
+        return {"since": since, "last": last, "anchor_pos": anchor_pos,
+                "anchor_quat": anchor_quat, "__reset__": reset}
+
+    state = world.get_or_init_predicate_state(key, make_state)
+    rows = slice(None) if env_id is None else slice(env_id, env_id + 1)
+    step = env.episode_length_buf[rows]
+    if not isinstance(current, torch.Tensor):
+        current = bool(current)
+    current = torch.as_tensor(current, dtype=torch.bool, device=env.device).reshape(-1)
+    since, last = state["since"][rows], state["last"][rows]
+    positions, orientations = positions.reshape(-1, 2, 3), orientations.reshape(-1, 2, 4)
+    anchor_pos, anchor_quat = state["anchor_pos"][rows], state["anchor_quat"][rows]
+    position_ok = torch.linalg.vector_norm(positions - anchor_pos, dim=-1) <= position_tolerance
+    # q and -q represent the same orientation. Normalize the dot product because
+    # physics quaternions can have small norm error; compare to cos(theta/2)
+    # rather than taking acos near 1, where rounding amplifies numerical noise.
+    quat_norms = torch.linalg.vector_norm(orientations, dim=-1) * torch.linalg.vector_norm(anchor_quat, dim=-1)
+    quat_dot = (orientations * anchor_quat).sum(dim=-1).abs() / quat_norms.clamp_min(1e-12)
+    rotation_ok = quat_dot >= math.cos(math.radians(rotation_tolerance_deg) / 2)
+    pose_ok = (position_ok & rotation_ok).all(dim=-1)
+    consecutive = (last == step) | (last == step - 1)
+    continuing = (since >= 0) & consecutive & pose_ok
+    start = torch.where(continuing, since, step)
+    anchor_pos.copy_(torch.where(continuing[:, None, None], anchor_pos, positions))
+    anchor_quat.copy_(torch.where(continuing[:, None, None], anchor_quat, orientations))
+    since.copy_(torch.where(current, start, -1))
+    last.copy_(step)
+    result = current & (step - since >= required_steps)
+    return bool(result[0]) if env_id is not None else result
+
+
+@atomic
+def object_resting_in_container(
+    env,
+    object: str | list[str],
+    container: str,
+    gripper_name: str | list[str] = "gripper",
+    exclude_contact_with: str | list[str] | None = None,
+    settle_time_s: float = 0.5,
+    linear_threshold: float = 0.05,
+    angular_threshold: float = 0.5,
+    position_tolerance: float = 0.001,
+    rotation_tolerance_deg: float = 0.5,
+    support_force_threshold: float = 0.01,
+    max_container_tilt_deg: float = 15.0,
+    logical: str = "all",
+    K: int = 1,
+    env_id: int | None = None,
+):
+    """Check an observed, released and settled placement supported by the bin.
+
+    The object's hull centroid must lie within the existing open-top containment
+    region. Protrusion and stable rim-spanning placements are allowed. The bin
+    must be upright, provide upward support, and be stationary. Both linear and
+    angular object velocities must stay below their thresholds for settle_time_s
+    simulated seconds, with no gripper contact or excluded-surface contact. Both
+    object and bin poses must remain within position_tolerance (1 mm) and
+    rotation_tolerance_deg (0.5 degrees) of their poses when the interval began.
+    This pose requirement rejects slow drift while allowing contact-solver noise
+    in instantaneous linear and angular velocity.
+
+    Pass exclude_contact_with="table" when the table must not support the target.
+    The window resets on any failed check, missing observation, or episode reset.
+    It is shared with identically parameterized subtask/termination checks, so
+    full placement credit and episode success occur on the same observed step.
+    """
+    for name, value in (("settle_time_s", settle_time_s),
+                        ("linear_threshold", linear_threshold),
+                        ("angular_threshold", angular_threshold),
+                        ("position_tolerance", position_tolerance),
+                        ("support_force_threshold", support_force_threshold)):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    if not math.isfinite(max_container_tilt_deg) or not 0 < max_container_tilt_deg < 90:
+        raise ValueError("max_container_tilt_deg must be between 0 and 90 degrees")
+    if not math.isfinite(rotation_tolerance_deg) or not 0 < rotation_tolerance_deg < 180:
+        raise ValueError("rotation_tolerance_deg must be between 0 and 180 degrees")
+
+    excluded = [exclude_contact_with] if isinstance(exclude_contact_with, str) else list(exclude_contact_with or [])
+    grippers = [gripper_name] if isinstance(gripper_name, str) else list(gripper_name)
+    settings = (container, tuple(sorted(grippers)), tuple(sorted(excluded)),
+                settle_time_s, linear_threshold, angular_threshold, position_tolerance, rotation_tolerance_deg,
+                support_force_threshold, max_container_tilt_deg)
+    world = get_world(env)
+    container_pos, container_quat = world.get_pose(container, env_id=env_id)
+    container_ready = _and(
+        upright(world, container, tolerance=math.radians(max_container_tilt_deg), env_id=env_id),
+        stationary(world, container, linear_threshold, angular_threshold, env_id=env_id),
+    )
+
+    def condition(world, obj, env_id=None):
+        obj_pos, obj_quat = world.get_pose(obj, env_id=env_id)
+        current = in_opentop_container(world, obj, container, env_id=env_id)
+        current = _and(current, container_ready)
+        current = _and(current, world.is_supported_on_surface(
+            obj, container, force_threshold=support_force_threshold, env_id=env_id,
+        ))
+        current = _and(current, gripper_detached(world, obj, gripper_name, env_id=env_id))
+        current = _and(current, stationary(world, obj, linear_threshold, angular_threshold, env_id=env_id))
+        for surface in excluded:
+            current = _and(current, _not(in_contact(
+                world, obj, surface, force_threshold=support_force_threshold, env_id=env_id,
+            )))
+        return _condition_held_for_time(
+            world, current, key=f"resting_in_container::{(obj, settings)!r}",
+            duration_s=settle_time_s,
+            positions=torch.stack((obj_pos, container_pos), dim=-2),
+            orientations=torch.stack((obj_quat, container_quat), dim=-2),
+            position_tolerance=position_tolerance, rotation_tolerance_deg=rotation_tolerance_deg,
+            env_id=env_id,
+        )
+
+    return evaluate_spatial_condition(env, object, condition, logical, K, env_id=env_id)
+
+
+def resting_in_container_diagnostics(env, params: dict, env_id: int = 0) -> dict:
+    """Read placement requirements and the existing timer without advancing it.
+
+    Intended for collection status and debugging a missed placement. No predicate
+    state is created, reset or updated, and no success outcome is overridden.
+    """
+    import inspect
+
+    bound = inspect.signature(object_resting_in_container).bind(env, **params)
+    bound.apply_defaults()
+    p = bound.arguments
+    obj, container = p["object"], p["container"]
+    if not isinstance(obj, str):
+        raise ValueError("Placement diagnostics require one object")
+    world = get_world(env)
+    excluded = p["exclude_contact_with"]
+    excluded = [excluded] if isinstance(excluded, str) else list(excluded or [])
+    obj_velocity = world.get_velocity(obj, env_id=env_id)
+    bin_velocity = world.get_velocity(container, env_id=env_id)
+    checks = {
+        "inside": bool(in_opentop_container(world, obj, container, env_id=env_id)),
+        "bin_upright": bool(upright(world, container, tolerance=math.radians(p["max_container_tilt_deg"]), env_id=env_id)),
+        "bin_stationary": bool(stationary(world, container, p["linear_threshold"], p["angular_threshold"], env_id=env_id)),
+        "object_stationary": bool(stationary(world, obj, p["linear_threshold"], p["angular_threshold"], env_id=env_id)),
+        "bin_support": bool(world.is_supported_on_surface(obj, container, force_threshold=p["support_force_threshold"], env_id=env_id)),
+        "gripper_detached": bool(gripper_detached(world, obj, p["gripper_name"], env_id=env_id)),
+        "no_excluded_contact": all(not bool(in_contact(world, obj, surface, force_threshold=p["support_force_threshold"], env_id=env_id))
+                                   for surface in excluded),
+    }
+    result = {
+        "object": obj, "blocked": [name for name, passed in checks.items() if not passed],
+        "checks": checks, "step": int(env.episode_length_buf[env_id]),
+        "linear_speed_m_s": {"object": float(torch.linalg.vector_norm(obj_velocity[:3])),
+                             "bin": float(torch.linalg.vector_norm(bin_velocity[:3]))},
+        "angular_speed_rad_s": {"object": float(torch.linalg.vector_norm(obj_velocity[3:])),
+                                "bin": float(torch.linalg.vector_norm(bin_velocity[3:]))},
+        "bin_force_n": world.get_contact_force(obj, container, env_id=env_id).tolist(),
+        "required_s": p["settle_time_s"], "observed_s": 0.0,
+    }
+    grippers = [p["gripper_name"]] if isinstance(p["gripper_name"], str) else list(p["gripper_name"])
+    settings = (container, tuple(sorted(grippers)), tuple(sorted(excluded)),
+                p["settle_time_s"], p["linear_threshold"], p["angular_threshold"],
+                p["position_tolerance"], p["rotation_tolerance_deg"],
+                p["support_force_threshold"], p["max_container_tilt_deg"])
+    state = world._predicate_state.get(f"resting_in_container::{(obj, settings)!r}")
+    if state is not None:
+        since = int(state["since"][env_id])
+        result["observed_s"] = max(0, result["step"] - since) * env.step_dt if since >= 0 else 0.0
+        result["evaluated_step"] = int(state["last"][env_id])
+        if since >= 0:
+            poses = [world.get_pose(name, env_id=env_id) for name in (obj, container)]
+            positions = torch.stack([pose[0] for pose in poses])
+            quats = torch.stack([pose[1] for pose in poses])
+            anchor_q = state["anchor_quat"][env_id]
+            dots = (quats * anchor_q).sum(dim=-1).abs()
+            norms = torch.linalg.vector_norm(quats, dim=-1) * torch.linalg.vector_norm(anchor_q, dim=-1)
+            result["pose_drift_m"] = torch.linalg.vector_norm(positions - state["anchor_pos"][env_id], dim=-1).tolist()
+            result["pose_drift_deg"] = torch.rad2deg(2 * torch.acos((dots / norms.clamp_min(1e-12)).clamp(0, 1))).tolist()
+    return result
+
 
 @atomic
 def object_on_top(

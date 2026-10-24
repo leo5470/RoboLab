@@ -1,9 +1,14 @@
 """Per-attempt, resumable camera jobs around the existing state renderer."""
 
+from contextlib import contextmanager
+from contextlib import nullcontext
+import fcntl
 import json
+import os
 from itertools import product
 from numbers import Integral
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -13,8 +18,27 @@ import numpy as np
 
 from .archive import ATTEMPT_ATTR
 from .cameras import FRAME_MAPPING_GROUP
+from .gpu_isolation import isolated_gpu_launch
 from .io import fsync_directory, publish_directory, sha256_file, sync_file, write_json
 from .validation import validate_recording
+
+
+@contextmanager
+def _gpu_slot(device, *, lock_dir=None):
+    """Serialize this user's OMY renderer children on each selected GPU."""
+    match = re.fullmatch(r"cuda(?::([0-9]+))?", device)
+    if match is None and device != "cpu":
+        raise ValueError("Rendering device must be cpu, cuda or cuda:N")
+    # CPU simulation still renders with Kit's default GPU 0.
+    index = int(match.group(1) or 0) if match is not None else 0
+    path = Path(lock_dir or tempfile.gettempdir()) / f"robolab_omy_render_{os.getuid()}_gpu{index}.lock"
+    with path.open("a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(f"Waiting for another OMY renderer to release GPU {index}...", flush=True)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def compare_raw_channels(source, rendered, group="data/demo_0", *, max_block_bytes=1024**2):
@@ -128,7 +152,7 @@ def verify_render_cache(output, profile):
 
 def render_recording(source, output, *, group="data/demo_0", python=None, device="cuda:0",
                      renderer="realtime", camera_scale=1.0, camera_width=None, camera_height=None,
-                     renders_per_frame=2, min_free_bytes=64 * 1024**2):
+                     renders_per_frame=2, min_free_bytes=64 * 1024**2, runner=None):
     """Render a native-15 attempt for review, never replaying physics actions.
 
     Warnings are retained: a successful render is not training certification.
@@ -168,11 +192,13 @@ def render_recording(source, output, *, group="data/demo_0", python=None, device
     profile = {"schema_version": 1, "source_sha256": report["source"]["sha256"],
                "source_fingerprint": episode["fingerprint"], "source_group": episode["group"],
                "config_sha256": sha256_file(config_path), "materializer_sha256": sha256_file(script),
+               "batch_worker_sha256": sha256_file(root / "robolab/core/omy_postprocess/batch_worker.py"),
                "renderer_helper_sha256": sha256_file(root / "robolab/core/replay/materialize.py"),
                "omy_camera_helper_sha256": sha256_file(root / "robolab/core/omy_postprocess/cameras.py"),
                "renderer": renderer, "camera_scale": camera_scale,
                "camera_width": camera_width, "camera_height": camera_height,
                "renders_per_frame": renders_per_frame,
+               "initial_warmup_renders": 8,
                "fps": 15, "alignment": "initial_state[0], then states[t-1]", "physics_replay": False,
                "profile_status": "provisional_review", "training_ready": False}
     # Capture top-level assets for cache invalidation. The materializer captures
@@ -204,16 +230,20 @@ def render_recording(source, output, *, group="data/demo_0", python=None, device
         raise OSError("Insufficient space for rendering; source retained")
     temporary = Path(tempfile.mkdtemp(prefix=f".{output.name}.partial-", dir=output.parent))
     try:
-        command = [str(python or sys.executable), "-u", str(script), "--input", str(source),
+        gpu = isolated_gpu_launch(device)
+        command = [*gpu.prefix, str(python or sys.executable), "-u", str(script), "--input", str(source),
                    "--output", str(temporary / "images.hdf5"), "--episode", episode["name"].removeprefix("demo_"),
-                   "--device", device, "--headless", "--require-native15", "--renderer", renderer,
+                   "--device", gpu.child_device, "--headless", "--require-native15", "--renderer", renderer,
                    "--camera-scale", str(camera_scale), "--renders-per-frame", str(renders_per_frame),
-                   "--kit_args", "--/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false"]
+                   "--kit_args", "--/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false "
+                                 "--/renderer/activeGpu=0 --/physics/cudaDevice=0"]
         if camera_width is not None:
             command.extend(["--camera-width", str(camera_width), "--camera-height", str(camera_height)])
         print("Rendering recorded states in a separate headless process; see", temporary / "render.log", flush=True)
-        with (temporary / "render.log").open("x") as log:
-            subprocess.run(command, cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
+        with (_gpu_slot(device) if runner is None else nullcontext()), (temporary / "render.log").open("x") as log:
+            log.write(f"GPU isolation: {json.dumps(gpu.metadata, sort_keys=True)}\n")
+            log.flush()
+            (runner or subprocess.run)(command, cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True, env=gpu.env)
         if sha256_file(source) != profile["source_sha256"] or sha256_file(config_path) != profile["config_sha256"]:
             raise RuntimeError("Source/configuration changed during rendering")
         for path, expected in top_assets.items():
@@ -270,6 +300,7 @@ def render_recording(source, output, *, group="data/demo_0", python=None, device
         artifacts = {p.name: sha256_file(p) for p in temporary.iterdir() if p.is_file()}
         manifest = {"schema_version": 1, "status": "rendered_for_review", "training_ready": False,
                     "profile": profile, "source": str(source), "camera_shapes": camera_shapes,
+                    "gpu_execution": gpu.metadata,
                     "asset_dependencies": dependencies,
                     "raw_preservation": preserved_raw,
                     "attempt": json.loads(identity) if identity else None,

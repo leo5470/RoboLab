@@ -7,6 +7,38 @@ from omy_leader_isaaclab.franka_config import FRANKA_LOWER, FRANKA_UPPER
 from omy_leader_isaaclab.franka_wrist import K4, K5, K7
 
 
+class DirectWristTurnReference:
+    """Choose the wrist encoder's whole-turn reference once per connection.
+
+    Extended-position joint_6 can report the calibrated pose plus whole turns.
+    Select an equivalent initial J7 target inside its calibrated joint limits,
+    then keep that source offset fixed. Never wrap subsequent motion or reset
+    the reference at episode boundaries: that would introduce command jumps.
+    """
+
+    def __init__(self, config):
+        self.config = config
+        self.offset_rad = None
+
+    def normalize(self, reading):
+        raw = float(reading["joint_6.pos"])
+        if not math.isfinite(raw):
+            raise ValueError("Nonfinite L100 wrist reading")
+        if self.offset_rad is None:
+            c = self.config
+            gain = K7 * c.omy_sign.get("joint_6", 1.0)
+            self.offset_rad = 0.0
+            if c.wrist_mode == "direct" and abs(gain) == 1.0:
+                target = c.j7_offset_rad + gain * (raw - c.omy_zero_rad.get("joint_6", 0.0))
+                turns = round(target / math.tau)
+                equivalent = target - turns * math.tau
+                if FRANKA_LOWER[6] + c.limit_margin_rad <= equivalent <= FRANKA_UPPER[6] - c.limit_margin_rad:
+                    self.offset_rad = turns * math.tau / gain
+        if not self.offset_rad:
+            return reading
+        return {**reading, "joint_6.pos": raw - self.offset_rad}
+
+
 def validate_home(config, target):
     target = tuple(float(value) for value in target)
     if len(target) != 7 or not all(math.isfinite(value) for value in target):

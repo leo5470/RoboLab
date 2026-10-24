@@ -297,12 +297,16 @@ class RobolabRecorderManager(RecorderManager):
         self._hdf5_initialized = True
         self._apply_dataset_attrs()
 
-    def set_hdf5_file(self, filename: str):
+    def set_hdf5_file(self, filename: str, *, attrs: dict | None = None):
         """Switch to a new HDF5 file. Closes the current file and opens/creates the new one.
 
         Args:
             filename: New filename (e.g. "run_0.hdf5"). Written to the same export directory.
+            attrs: Metadata for the new file. Cache before switching so it never
+                stamps the previous recording or opens with stale task identity.
         """
+        if attrs is not None:
+            self._dataset_attrs.update(attrs)
         self._ensure_hdf5_handler(filename)
 
     def set_episode_index(self, episode_index: int, env_ids: Sequence[int] | None = None):

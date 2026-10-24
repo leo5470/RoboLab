@@ -3,7 +3,7 @@
   "scene_manifest": "assets/scenes/simple_pnp/manifest.json",
   "task_count": 6754,
   "episode_length_s": 50,
-  "success_condition": "object_in_container with gripper detachment",
+  "success_condition": "object_resting_in_container: released, bin-supported and pose-stable for 0.5 seconds",
   "tasks": [
     {
       "task": "pnp_000_blue_block_00_task.py",
@@ -54046,5 +54046,13 @@
     "original_task_count": 7200,
     "excluded_task_count": 446,
     "retained_task_count": 6754
+  },
+  "success_params": {
+    "exclude_contact_with": "table",
+    "settle_time_s": 0.5,
+    "linear_threshold": 0.05,
+    "angular_threshold": 0.5,
+    "position_tolerance": 0.001,
+    "rotation_tolerance_deg": 0.5
   }
 }

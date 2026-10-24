@@ -4,6 +4,169 @@ The entry point is [`scripts/postprocess_omy.py`](../scripts/postprocess_omy.py)
 
 The design and outstanding training decisions remain in [postprocess.md](postprocess.md). This implementation preserves raw trajectories; it does not repair bad grasps or remove manipulation pauses.
 
+The [`collect_omy_xr.sh`](../scripts/collect_omy_xr.sh) launcher now runs validation,
+packaging and policy-camera rendering automatically after quota completion or a
+graceful Ctrl+C. It waits for recording and simulator shutdown, then prints the
+absolute postprocessed dataset, manifest and report locations. Outputs live in
+`SESSION/postprocess/RUN_ID/`; `dataset.json` lists completed HDF5 camera episodes,
+and `summary.json` retains processing failures and collection status. Rendering
+uses configured camera resolution, realtime `cuda:1` and two renders per frame.
+Failed/interrupted valid attempts and quality flags are retained, with
+`training_ready: false`. Numerical mapping and recipe-gated export are separate.
+
+Collection uses GPU 0. While processing runs on GPU 1 in the original terminal,
+start the next collection in a separate terminal. Override this with the
+launcher's `--postprocess-device cuda:N`, or `--device cuda:N` on the session
+postprocessor. These indices use the host's `nvidia-smi` ordering. Each renderer
+uses bubblewrap to expose only the selected GPU in a private device namespace;
+CUDA and Vulkan see that GPU as local index 0. This prevents the extra CUDA and
+graphics allocations previously observed on host GPU 0. CPU and storage remain
+shared. Isolation requires Linux with `bwrap`, `nvidia-smi` and working
+user/mount namespaces; failure stops processing without an unisolated fallback.
+The render log and manifest's `gpu_execution` field record the host GPU UUID
+and child mapping. Existing verified camera caches remain reusable.
+OMY renderer processes for the same user and GPU take turns through a file lock,
+including jobs started by later collections. A persistent worker holds the lock
+for its entire lifetime and releases it after simulator shutdown.
+
+Use `--no-postprocess` to opt out. Retry a finalized invocation with
+`.venv/bin/python -u scripts/postprocess_omy_session.py --handoff SESSION/collection_runs/RUN_ID.json`.
+Matching archives/caches are verified and reused. Each resume processes only
+new recording parts in its own invocation directory. The
+[collection guide](omy_xr_collection.md#automatic-postprocessing-and-dataset-location)
+documents interrupts, logging, output layout and exit statuses.
+
+Older object-layout sessions without handoff files can be processed with
+`.venv/bin/python -u scripts/postprocess_omy_session.py --session SESSION --device cuda:1`.
+The session lock excludes active collection while the input list is snapshotted,
+then releases so collection can resume into new parts during processing.
+The printed retry command includes `--run-id` to reuse verified outputs and the
+frozen recording list in `session_input.json`.
+
+## Selection, persistent workers, and verification videos
+
+The session postprocessor now defaults to **one Isaac application per batch**.
+It starts lazily when a selected attempt needs rendering. Matching recorded
+configurations reuse an environment; layout/configuration changes rebuild the
+environment within that same application. The profile still renders restored
+recorded states at the configured resolution with two passes per frame. Eight
+unrecorded renders at the exact initial pose refresh camera history before frame
+zero. No physics action is replayed and no dataset rows are added.
+
+```bash
+.venv/bin/python -B scripts/postprocess_omy_session.py \
+  --handoff SESSION/collection_runs/RUN_ID.json --device cuda:1 \
+  --skip-failed --preview-videos
+```
+
+`--skip-failed` selects explicit successes before packaging or rendering. Raw
+failed/interrupted attempts remain saved. Unknown outcomes are reported among
+skipped attempts. Selected successful attempts must still pass all structural,
+native-15, asset/provenance and numerical-preservation checks. Without this flag,
+valid failures are included as before. Empty selections and fully cached retries
+start no Isaac application.
+
+The supervisor stores GPU/selection/preview preferences in the finalized handoff;
+`processing_options.json` persists the processing selection. The retry command
+prints the corresponding flags. To use another selection, choose another output
+run with `--run-id NEW_RUN`; the original handoff and its recording list are reused.
+The `--session SESSION --run-id RUN` path remains available for an explicitly
+closed layout session and snapshots its recording list before releasing the
+collection lock.
+
+Each attempt is independently verified and atomically published. The parent
+checks a matching worker acknowledgment before examining its output; pending or
+failed jobs never enter `dataset.json`. The worker keeps its native stdout in the
+current attempt's `render.log` and detaches that log before acknowledgment, so
+later jobs cannot change a published log checksum.
+
+Worker diagnostics live under `workers/isaac_*/`: `worker.log`, `ready.json`,
+`job_*.json`, and `result_*.json`. `summary.json` reports application starts,
+environment builds/reuses, rendered/skipped/failed counts, and skipped outcomes.
+It also records validation, packaging, rendering/verification, and video wall
+times; worker metrics separate application startup and environment setup.
+A worker crash or timeout permits one automatic worker restart; repeated crashes
+stop further worker launches and retain diagnostics for an explicit retry.
+The startup watchdog is 300 seconds and each active job has a 900-second timeout.
+Ctrl+C stops the worker process group, closes its descendants, and retains
+completed outputs. Missing isolation support never triggers an unrestricted
+fallback. Kit worker/TBB thread limits are four; review encoding uses two threads.
+
+For diagnostic comparison, `--renderer-mode per-episode` retains the original
+one-application-per-attempt path. Normal operation uses `--renderer-mode batch`.
+
+`--preview-videos` encodes review clips on CPU after releasing the rendering GPU.
+The launcher equivalents are `--postprocess-skip-failed` and
+`--postprocess-preview-videos`; both are opt-in. Preview output includes:
+
+```text
+verification_videos/
+  all_successes.mp4           # combined native-15 reel
+  success_*.mp4               # shoulder / wrist side by side
+  success_*_frames.jpg        # first / middle / last from each camera
+  final_frames.jpg
+  index.json                 # decoded counts, timing and artifact checksums
+```
+
+Labels use the recorded outcome and clips end at the final recorded frame.
+Diagnostic fixtures are explicitly labeled. Existing matching preview outputs
+are checksum-verified and reused. Generate videos separately without Isaac:
+
+```bash
+.venv/bin/python -B scripts/preview_omy_session.py --dataset SESSION/postprocess/RUN_ID
+```
+
+## Fresh-fixture validation and performance
+
+`scripts/check_omy_preparation.py` exercises preparation, refreshed initial-state
+capture, native-15 recording, and repeated resets without opening a leader port.
+Its synthetic hold trajectories are marked `diagnostic_only`; assigned outcomes
+exercise selection and are not human demonstrations. Use `--host-gpu` to isolate
+the physical GPU before Isaac starts. The wrapper confirms child exit and prints
+a finalized diagnostic handoff:
+
+```bash
+.venv/bin/python -B scripts/check_omy_preparation.py --host-gpu 1 \
+  --output-dir output/omy_pipeline_checks/NEW_CHECK --episodes 2 --frames 15
+.venv/bin/python -B scripts/postprocess_omy_session.py --handoff PRINTED_HANDOFF \
+  --skip-failed --preview-videos --device cuda:1
+```
+
+A fresh check used two episodes each for wooden-bowl layouts 00/01, canned
+mushrooms, milk carton, and a small plate. All ten prepared in 0.533 simulated
+seconds and retained settled initial snapshots. Numerical source rows and
+attributes survived postprocessing exactly. The batch used one application,
+five environment builds, and five reuses, and produced both policy cameras and
+verified 15 FPS videos.
+
+On the RTX 3080, ten **15-frame diagnostic episodes** took **336.3 seconds** with
+per-episode launches versus **115.3 seconds** with the persistent worker, including
+validation and CPU review encoding: about **2.9× faster** for this startup-heavy
+fixture. Both modes showed zero attributed GPU 0 compute/graphics memory; batch
+GPU 1 memory peaked at **5,791 MiB**. First/middle/last comparisons over 60 camera
+frames had at most 1.98/255 mean absolute RGB error between modes; raw numerical
+channels remain exact. This benchmark is not a timing estimate for ten full-length
+human demonstrations, and live leader/XR collection latency has not been measured.
+
+Evidence: `output/omy_pipeline_checks/20261023_164744/` contains
+`preparation_check.json`, `benchmark.json`, GPU sample logs,
+`batch_image_comparison.json`, and the per-mode output datasets and videos.
+
+The final geometry/support check and cache-only retry are under
+`output/omy_pipeline_checks/final_20261023_172019/`. `final_validation.json`
+records ten source files preserved exactly, one first-pass Isaac application,
+five environment reuses, zero applications on retry, and zero attributed GPU 0
+memory across 528 samples. `settled_start_preview.jpg` shows the initial camera
+views after preparation. All ten final preparation checks passed with explicit
+table-support checks. Verification uses fresh diagnostic fixtures; historical
+collection datasets are outside this implementation's migration scope.
+
+Regression verification covered 629 distinct OMY tests across the broad and
+focused runs. The broad run passed 627 tests; the follow-up also exercised the
+updated task-logic fixture and a late worker-exit cleanup case. Syntax, shell,
+and whitespace checks passed. The documented `check_omy_preparation.py --host-gpu 1`
+command was separately run and produced a finalized handoff after child shutdown.
+
 New OMY recordings include `task_dirs` and portable task-file SHA-256 provenance.
 The materializer automatically reads the recorded folder's `manifest.json` and
 imports only the selected task; a changed task file is refused before Sim

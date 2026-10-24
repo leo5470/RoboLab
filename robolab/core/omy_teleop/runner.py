@@ -19,30 +19,47 @@ from .config import ENV_POSTFIX, configure_device, configure_performance, regist
 from .diagnostics import DiagnosticFailure, RuntimeDiagnostics
 from .options import ARM_JOINTS, calibration_metadata, upstream_metadata
 from .observations import ObservationPassCache
+from .leader_state import leader_state_metadata
 from .performance import PerformanceMonitor, RenderPacer, capture_due
 
 
-def prepare_output(path=None):
-    path = Path(path) if path else Path("output/omy_teleop") / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+def prepare_output(path=None, *, task=None):
+    if not path:
+        root = Path("output/omy_teleop")
+        root.mkdir(parents=True, exist_ok=True)
+        if task:
+            task_name = "".join(char if char.isalnum() or char in "_-" else "_" for char in task)
+            name = f"{datetime.now():%Y%m%d_%H%M%S}_{task_name}"
+        else:
+            name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        candidate = root / name
+        suffix = 1
+        while True:
+            try:
+                candidate.mkdir()
+            except FileExistsError:
+                suffix += 1
+                candidate = root / f"{name}_{suffix}"
+            else:
+                return candidate.resolve()
+    path = Path(path)
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
         raise ValueError(f"Output directory must be new or empty: {path}")
     path.mkdir(parents=True, exist_ok=True)
     return path.resolve()
 
 
-def configure_recording(env, args, device_cfg, xr_session=None):
+def configure_recording(env, args, device_cfg, xr_session=None, *, initialize=True, dataset_attrs=None):
     recorder = env.recorder_manager
-    recorder.set_buffered_recording()
-    recorder.cfg.dataset_export_mode = (
-        DatasetExportMode.EXPORT_ALL
-        if args.save_failures else DatasetExportMode.EXPORT_SUCCEEDED_ONLY
-    )
-    recorder.set_hdf5_compression("lzf" if args.record_images else None)
-    recorder.set_flush_interval(60 if args.record_images else 0)
-    recorder.set_flush_memory_cleanup(False)
-    # Keep failures in the same file: periodic streaming starts before the outcome
-    # is known, and switching handlers on failure would lose already-flushed data.
-    recorder.set_hdf5_file("omy_demos")
+    if initialize:
+        recorder.set_buffered_recording()
+        recorder.cfg.dataset_export_mode = (
+            DatasetExportMode.EXPORT_ALL
+            if args.save_failures else DatasetExportMode.EXPORT_SUCCEEDED_ONLY
+        )
+        recorder.set_hdf5_compression("lzf" if args.record_images else None)
+        recorder.set_flush_interval(60 if args.record_images else 0)
+        recorder.set_flush_memory_cleanup(False)
     metadata = {
         "schema_version": 1,
         "upstream": upstream_metadata(),
@@ -55,6 +72,7 @@ def configure_recording(env, args, device_cfg, xr_session=None):
         "gripper_encoding": "+1=open,-1=closed",
         "gripper_observation": {"joint": "finger_joint", "units": "normalized_closure",
                                 "range": [0, 1], "raw_state_units": "rad"},
+        "leader_proprioception": leader_state_metadata(),
         "control_hz": 1 / device_cfg.dt,
         "calibration": calibration_metadata(args.calib),
         "device": {key: value for key, value in vars(device_cfg).items() if key not in ("class_type", "retargeters", "callbacks")},
@@ -67,7 +85,11 @@ def configure_recording(env, args, device_cfg, xr_session=None):
     if xr_session is not None:
         metadata["viewing"] = {key: value for key, value in xr_session.metadata.items()
                                if key not in ("completed", "display_waits", "xr_display_seen")}
-    recorder.set_dataset_attrs({"robolab_omy_teleop": json.dumps(metadata)})
+    # All identity fields are prepared before rotating the file. Each finalized
+    # recording retains its metadata, including if a transition is interrupted.
+    recorder.set_hdf5_file("omy_demos", attrs={
+        "robolab_omy_teleop": json.dumps(metadata), **(dataset_attrs or {}),
+    })
 
 
 def performance_settings(env, args):
@@ -78,6 +100,7 @@ def performance_settings(env, args):
     return {
         "profile": args.performance_profile,
         "physics_device": str(env.device),
+        "gpu_max_num_partitions": getattr(env.cfg.sim.physx, "gpu_max_num_partitions", 8),
         "initial_joint_pos_rad": [env.cfg.scene.robot.init_state.joint_pos[name] for name in ARM_JOINTS],
         "physics_dt": env.cfg.sim.dt,
         "control_hz": 1 / env.step_dt,
@@ -160,7 +183,7 @@ def operator_frame(env):
 def run(args, app, *, xr_session=None):
     # Resets and stepping must share inference mode: RoboLab stores tensors made
     # during step() and updates them in-place when beginning the next attempt.
-    output = prepare_output(args.output_dir)
+    output = prepare_output(args.output_dir, task=args.task)
     robolab.constants.set_output_dir(str(output))
     # This flag also enables inexpensive proprioception recording without images.
     robolab.constants.RECORD_IMAGE_DATA = args.record
@@ -306,7 +329,7 @@ def run(args, app, *, xr_session=None):
                         next_step = time.perf_counter()
                 timing.end_step(work_end=work_end, video_frames=produced)
                 now = time.perf_counter()
-                if now - report_start >= args.stats_interval:
+                if args.stats_interval > 0 and now - report_start >= args.stats_interval:
                     q = env.scene["robot"].data.joint_pos[0, joint_ids]
                     error = (q - action[:7]).abs().max().item()
                     print(timing.report(env.step_dt), flush=True)

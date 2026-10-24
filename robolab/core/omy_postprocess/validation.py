@@ -72,6 +72,32 @@ def _fingerprint(datasets):
     return digest.hexdigest()
 
 
+def _training_exclusions(group, metadata):
+    """Keep explicitly diagnostic sources out of training selection."""
+    scopes = [("file", group.file.attrs), ("data", group.parent.attrs),
+              ("episode", group.attrs), ("teleop", metadata)]
+    raw = group.parent.attrs.get("robolab_omy_collection")
+    if raw is not None:
+        try:
+            collection = json.loads(_plain(raw))
+        except (ValueError, TypeError):
+            collection = None  # Recording-level validation reports malformed JSON.
+        if isinstance(collection, dict):
+            scopes.append(("collection", collection))
+    reasons = []
+    for scope, attributes in scopes:
+        for name, excluded_value in (("training_ready", False), ("diagnostic_success", True)):
+            if name not in attributes:
+                continue
+            value = _plain(attributes[name])
+            if isinstance(value, (bool, int)) and value in (0, 1):
+                if bool(value) == excluded_value:
+                    reasons.append(f"{scope}.{name}={excluded_value}")
+            else:
+                reasons.append(f"{scope}.{name} has an invalid boolean marker")
+    return reasons
+
+
 def validate_episode(group, metadata):
     """Inspect an HDF5 episode without altering it or trimming quality defects.
 
@@ -110,6 +136,10 @@ def validate_episode(group, metadata):
         "timing": {},
         "alignment_tolerance_rad": JOINT_ALIGNMENT_ATOL_RAD,
     }
+    exclusions = _training_exclusions(group, metadata)
+    report["training_excluded"] = bool(exclusions)
+    if exclusions:
+        warn("non_training_recording", "Recording is explicitly excluded from training selection", reasons=exclusions)
     if "success" in group.attrs:
         success = _plain(group.attrs["success"])
         if isinstance(success, (bool, int)) and success in (0, 1):

@@ -52,6 +52,10 @@ class OmyDroidActionsCfg:
 class OmyDroidCfg(DroidCfg):
     # Inherit DROID's reset pose; don't substitute upstream's cube-demo home.
     wrist_cam = None
+    robot = DroidCfg().robot.copy()
+    # Implicit actuators ignore the legacy velocity_limit field in Isaac Lab 2.2.
+    robot.actuators["gripper"].velocity_limit = None
+    robot.actuators["gripper"].velocity_limit_sim = 5.0
 
 
 def _overview_rotation():
@@ -150,9 +154,14 @@ def configure_performance(env_cfg, args):
     env_cfg.sim.render_interval = render_interval(args, env_cfg.decimation)
     env_cfg.omy_stepping_profile = getattr(args, "stepping_profile", "ordinary")
     env_cfg.omy_substep_diagnostics = args.diagnostics
+    if hasattr(args, "scene_settle_timeout_s"):
+        from .preparation_runtime import configure_preparation
+
+        configure_preparation(env_cfg, args)
     env_cfg.omy_recording_profile = getattr(args, "recording_profile", "full")
     env_cfg.omy_episode_buffer_bytes = int(getattr(args, "episode_buffer_mb", 64) * 1024**2)
     cap = getattr(args, "solver_position_iterations", None)
+    env_cfg.sim.physx.gpu_max_num_partitions = getattr(args, "gpu_max_num_partitions", 8)
     if cap is not None:
         # Change the scene cap before PhysX is created, not the USD actor request.
         physx = env_cfg.sim.physx
@@ -165,9 +174,16 @@ def configure_performance(env_cfg, args):
         from .recording import configure_compact_recording
 
         configure_compact_recording(env_cfg, args)
+    else:
+        from .recording import LeaderStateRecorderCfg
+
+        env_cfg.recorders.record_leader = LeaderStateRecorderCfg()
     contact_names = [name for name, sensor in vars(env_cfg.scene).items()
                      if isinstance(sensor, ContactSensorCfg) and "__" in name]
     requirements = build_task_requirements(env_cfg)
+    if hasattr(args, "scene_settle_timeout_s") and "table" in (env_cfg.contact_object_list or []):
+        requirements.contacts.update(tuple(sorted((name, "table")))
+                                     for name in env_cfg.contact_object_list if name != "table")
     grippers = tuple(name for name, target in (env_cfg.contact_gripper or {}).items() if isinstance(target, str))
     effective, retained = selected_contact_sensors(requirements, contact_names, args.contact_sensors,
                                                  grippers=grippers)

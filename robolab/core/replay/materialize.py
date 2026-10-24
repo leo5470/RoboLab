@@ -453,7 +453,7 @@ class RecordedEpisode:
 def materialize_episode(env, episode: RecordedEpisode, demo_group: h5py.Group, *,
                         compression: str | None = None, renders_per_frame: int = 1,
                         groups: tuple[str, ...] = IMAGE_OBS_GROUPS,
-                        progress=None) -> dict[str, tuple[int, ...]]:
+                        progress=None, initial_warmup_renders: int = 0) -> dict[str, tuple[int, ...]]:
     """Render every frame of a recorded episode into ``demo_group``.
 
     For each frame the recorded scene state is written into the simulator (never
@@ -479,6 +479,12 @@ def materialize_episode(env, episode: RecordedEpisode, demo_group: h5py.Group, *
     for step in range(episode.num_actions):
         state_tree, row = episode.state_for(step)
         restore_scene_state(env, state_tree, row)
+        if step == 0:
+            # Flush temporal camera history at the exact recorded initial pose.
+            # This adds no physics steps or dataset rows, including in a reused env.
+            for _ in range(initial_warmup_renders):
+                env.sim.forward()
+                env.sim.render()
         obs = render_observations(env, renders_per_frame=renders_per_frame)
         arrays = image_observation_arrays(obs, groups=groups)
         if not arrays:

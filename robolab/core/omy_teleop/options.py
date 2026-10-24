@@ -66,8 +66,10 @@ def build_parser(app_launcher=None, *, include_video=True, include_performance_p
                              "unknown consumers retain the full set.")
     parser.add_argument("--render-interval", type=int,
                         help="Physics steps between renders; auto: 2*video-every for stream-only, otherwise 2.")
-    parser.add_argument("--solver-position-iterations", type=int, choices=(16, 32),
-                        help="OMY scene position-iteration cap; 16 is an opt-in candidate, 32 is the reference.")
+    parser.add_argument("--solver-position-iterations", type=int, choices=(16, 32, 64),
+                        help="OMY scene position-iteration cap; 64 permits the robot's full iteration request.")
+    parser.add_argument("--gpu-max-num-partitions", type=int, choices=(1, 2, 4, 8, 16, 32), default=8,
+                        help="GPU solver partition limit (default: 8); 1 is a single-robot performance candidate.")
     parser.add_argument("--stepping-profile", choices=("ordinary", "held-target"), default="ordinary",
                         help="held-target: audited native-15 CUDA stepping; logs a reason when falling back.")
     parser.add_argument("--recording-profile", choices=("full", "compact"), default="full",
@@ -75,7 +77,8 @@ def build_parser(app_launcher=None, *, include_video=True, include_performance_p
     parser.add_argument("--episode-buffer-mb", type=float, default=64.0,
                         help="Maximum allocated compact episode buffer in MiB (default: 64).")
     parser.add_argument("--stats-interval", type=float, default=5.0,
-                        help="Seconds between rolling performance reports (last 300 control steps).")
+                        help="Seconds between rolling performance reports (last 300 control steps); "
+                             "0 disables the entire periodic reporting block.")
     parser.add_argument("--diagnostics", action="store_true",
                         help="Log physics-substep states and timings; stop on invalid simulated joint states.")
     parser.add_argument("--reference-observations", action="store_true",
@@ -93,10 +96,12 @@ def build_parser(app_launcher=None, *, include_video=True, include_performance_p
 def validate_args(parser, args):
     import math
 
-    for name in ("stale_s", "read_hz", "vel_scale", "auto_zero_settle_s", "episode_length_s", "stats_interval"):
+    for name in ("stale_s", "read_hz", "vel_scale", "auto_zero_settle_s", "episode_length_s"):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
             parser.error(f"--{name.replace('_', '-')} must be finite and positive")
+    if not math.isfinite(args.stats_interval) or args.stats_interval < 0:
+        parser.error("--stats-interval must be finite and nonnegative (0 disables periodic reporting)")
     if args.steps < 0 or args.num_episodes < 1 or args.video_every < 1 or args.baudrate < 1:
         parser.error("steps must be nonnegative; episodes, video-every, and baudrate must be positive")
     if not math.isfinite(args.gripper_open) or not 0 <= args.gripper_open <= 100:

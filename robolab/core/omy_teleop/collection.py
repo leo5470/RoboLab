@@ -1,8 +1,10 @@
 """F9-key episode control for the dedicated L100/XR collector."""
 
+import argparse
 import math
 import time
 from contextlib import nullcontext
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -10,6 +12,27 @@ from .options import ARM_JOINTS
 
 
 RESET_KEY = "F9"
+
+
+@dataclass
+class CollectionProgress:
+    """Keep saved attempt IDs separate from the successful-episode target."""
+
+    target_successes: int
+    attempts: int = 0
+    successes: int = 0
+
+    @property
+    def complete(self):
+        return self.successes >= self.target_successes
+
+    def finish(self, results=()):
+        self.attempts += 1
+        self.successes += int(bool(results) and all(result.get("success", False) for result in results))
+
+    def summary(self):
+        return {"episode_count_mode": "successes", "completed_attempts": self.attempts,
+                "successful_episodes": self.successes, "target_successful_episodes": self.target_successes}
 
 
 class EpisodeReset:
@@ -54,7 +77,7 @@ class EpisodeReset:
 
     def close(self):
         if self._sub is not None:
-            self._input.unsubscribe_from_keyboard_events(self._keyboard, self._sub)
+            self._input.unsubscribe_to_keyboard_events(self._keyboard, self._sub)
             self._sub = None
 
 
@@ -62,21 +85,24 @@ class ReadyGate:
     """Compare fresh raw L100 samples against the fixed calibrated home."""
 
     def __init__(self, device, initial_q, *, tolerance_rad=0.12, movement_rad=0.035,
-                 stable_s=0.3, clock=time.monotonic):
+                 stable_s=0.3, clock=time.monotonic, reset_key=RESET_KEY):
         self.device = device
         self.initial_q = np.asarray(initial_q, dtype=float)
         self.tolerance_rad = tolerance_rad
         self.movement_rad = movement_rad
         self.stable_s = stable_s
         self.clock = clock
+        self.reset_key = reset_key
         self._near_since = None
         self._near_vector = None
         self._anchor = None
         self.last_age_s = None
+        self.last_reading = None
 
     def sample(self):
         reading, age = self.device._latest()
         self.last_age_s = age
+        self.last_reading = reading
         if reading is None or not math.isfinite(age) or age > self.device.cfg.stale_s:
             self._near_since = None
             return None
@@ -112,6 +138,24 @@ class ReadyGate:
         self._anchor = self._vector(reading)
         return True
 
+    def rejection_reason(self):
+        """Explain the last sampled READY check without another source read."""
+        if (self.last_reading is None or self.last_age_s is None
+                or not math.isfinite(self.last_age_s) or self.last_age_s > self.device.cfg.stale_s):
+            return "no fresh leader sample"
+        target = self.device._mapper.raw_target(self.last_reading)
+        errors = target - self.initial_q
+        if not np.isfinite(errors).all():
+            return "invalid mapped joint angles"
+        reasons = []
+        outside = np.flatnonzero(np.abs(errors) > self.tolerance_rad)
+        if len(outside):
+            joints = ", ".join(f"J{i + 1}={math.degrees(errors[i]):+.1f} deg" for i in outside)
+            reasons.append(f"mapped offsets from home: {joints} (tolerance {math.degrees(self.tolerance_rad):.1f} deg)")
+        if self.device._mapper.gripper_command(self.last_reading["gripper.pos"]) <= 0:
+            reasons.append("trigger reads closed; release it fully")
+        return "; ".join(reasons) if reasons else f"hold READY still for {self.stable_s:g} s before pressing {self.reset_key}"
+
     @staticmethod
     def _vector(reading):
         return np.asarray([reading[f"joint_{i}.pos"] for i in range(1, 7)]
@@ -131,20 +175,43 @@ def build_parser():
     parser = xr_parser()
     parser.description = f"Collect state-only L100/XR demonstrations; {RESET_KEY} resets or confirms READY."
     parser.set_defaults(record=True, save_failures=True, num_episodes=1000)
+    parser._option_string_actions["--num-episodes"].help = (
+        "Total successful episodes to collect across the selected task/layouts; "
+        "object mode defaults to all layout quotas. Failed/reset attempts do not count."
+    )
     parser.add_argument("--ready-tolerance-rad", type=float, default=0.12)
     parser.add_argument("--start-motion-rad", type=float, default=0.035)
     parser.add_argument("--ready-stable-s", type=float, default=0.3)
+    from .preparation import add_arguments as preparation_arguments
+
+    preparation_arguments(parser)
     parser.add_argument("--max-attempt-steps", type=int, default=1200,
                         help="Maximum recorded control steps per attempt; bounds live recorder memory.")
     parser.add_argument("--max-attempt-seconds", type=float, default=20.0,
                         help="Maximum simulated seconds per attempt (default: 20, independent of control rate).")
+    parser.add_argument("--collection-handoff", help=argparse.SUPPRESS)
+    parser.add_argument("--collection-run-id", help=argparse.SUPPRESS)
+    from .collection_options import add_arguments
+
+    add_arguments(parser)
     return parser
 
 
 def validate_args(parser, args):
     from .xr import validate_args as validate_xr
+    from .collection_options import configure_selection
 
+    try:
+        configure_selection(parser, args)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
     validate_xr(parser, args)
+    from .preparation import PreparationSettings
+
+    try:
+        PreparationSettings.from_args(args)
+    except ValueError as error:
+        parser.error(str(error))
     if args.auto_zero or not args.calib:
         parser.error("collection needs the fixed READY calibration; --auto-zero is unsupported")
     if args.stream or args.record_images or not args.record or not args.save_failures:
@@ -178,13 +245,47 @@ def run(args, app, *, xr_session):
                          register_omy_envs, validate_environment)
     from .observations import ObservationPassCache
     from .environment import OmyEnv
+    from .preparation import PreparationSettings
+    from .preparation_runtime import ScenePreparation
     from .performance import PerformanceMonitor, RenderPacer
     from .runner import (close_recording, configure_recording, contact_cache_stats, finish_interrupted,
                          performance_settings, prepare_output)
+    session = None
 
     @torch.inference_mode()
     def collect():
-        output = prepare_output(args.output_dir)
+        nonlocal session
+        plan = getattr(args, "layout_plan", None)
+        if plan is not None:
+            from .collection_options import run_contract, session_metadata
+            from .layout_session import LayoutSession
+
+            if args.resume:
+                session = LayoutSession.resume(args.resume, plan=plan, run_metadata=run_contract(args))
+            else:
+                root = prepare_output(args.output_dir, task=plan.object_name)
+                session = LayoutSession.create(root, plan, args.num_episodes, session_metadata(args),
+                                               target_total_successes=getattr(args, "target_total_successes", None))
+            handoff = getattr(args, "_collection_handoff", None)
+            if handoff is not None:
+                handoff.set_session(session.root)
+            if session.finished:
+                print(f"No pending layouts: {json.dumps(session.summary())}", flush=True)
+                return 0
+            args.task = session.current.task
+            args.task_resolution = session.current.resolution
+            args.task_dirs = list(session.current.resolution.task_dirs)
+            output = session.start_part()
+        else:
+            output = prepare_output(args.output_dir, task=args.task)
+        root_output = session.root if session else output
+        handoff = getattr(args, "_collection_handoff", None)
+        if handoff is not None:
+            if not session:
+                handoff.set_session(root_output)
+            handoff.add_recording(output)
+        reset_key = getattr(args, "reset_key", RESET_KEY)
+        next_key = getattr(args, "next_layout_key", "F12")
         robolab.constants.set_output_dir(str(output))
         # RoboLab's historical flag enables policy-observation recorder terms;
         # the registered OMY variant has no image observations or cameras.
@@ -200,15 +301,19 @@ def run(args, app, *, xr_session):
         configure_performance(cfg, args)
         device_cfg = configure_device(cfg, args)
         xr_session.configure(cfg)
-        env = device = keyboard = cache = pacer = None
+        env = device = keyboard = cache = pacer = status = layout_recording = None
         timing = PerformanceMonitor(capacity=min(args.max_attempt_steps,
                                                  math.ceil(args.max_attempt_seconds * args.control_hz)))
         active = False
         total_steps = 0
         attempt_steps = 0
         attempt_timing = []
-        attempt = 0
+        progress = CollectionProgress(args.num_episodes)
+        if session:
+            progress.attempts, progress.successes = session.attempts, session.successes
         settings = {}
+        finish_attempt = save_part_summary = event = None
+        end_event_written = False
         try:
             env_started = time.perf_counter()
             env, cfg = create_env(cfg, policy="omy_joint_position", rendering_mode=args.rendering_mode,
@@ -225,45 +330,104 @@ def run(args, app, *, xr_session):
             timing.install(env)
             if args.control_hz < 60 and not args.no_realtime:
                 pacer = RenderPacer(env.sim, cfg.sim.dt * cfg.sim.render_interval, monitor=timing)
-            configure_recording(env, args, device_cfg, xr_session)
             recorder = env.recorder_manager
             # Keep HDF5 writes at episode boundaries, outside the live loop.
             # max_attempt_steps bounds the in-memory state-only buffer.
-            recorder.set_flush_interval(0)
-            recorder.set_dataset_attrs({"robolab_omy_collection": json.dumps({
-                "schema_version": 1, "start": "move_after_space_confirmed_ready",
-                "reset_key": RESET_KEY, "ready_tolerance_rad": args.ready_tolerance_rad,
+            collection_metadata = {
+                "schema_version": 1, "start": "move_after_ready_confirmation",
+                "reset_key": reset_key, "ready_tolerance_rad": args.ready_tolerance_rad,
                 "start_motion_rad": args.start_motion_rad, "ready_stable_s": args.ready_stable_s,
                 "images": "deferred", "recording": "state_only",
                 "max_attempt_steps": args.max_attempt_steps,
                 "max_attempt_seconds": args.max_attempt_seconds,
-            })})
-            keyboard = EpisodeReset()
+                "episode_count_mode": "successes", "target_successful_episodes": args.num_episodes,
+                "preparation": PreparationSettings.from_args(args).metadata(),
+            }
+            if session:
+                from .collection_controls import CollectionControls
+                from .collection_status import CollectionStatus
+                from .layout_runtime import LayoutRecording
+
+                collection_metadata["next_layout_key"] = next_key
+                collection_metadata["episodes_per_layout"] = session.target_successes
+                collection_metadata["target_total_successful_episodes"] = session.target_total_successes
+                layout_recording = LayoutRecording(env, cfg, args, device_cfg, xr_session, session,
+                                                   collection_metadata)
+                layout_recording.open(output, initialize=True)
+                keyboard = CollectionControls(reset_key, next_key)
+                status = CollectionStatus()
+            else:
+                configure_recording(env, args, device_cfg, xr_session)
+                recorder.set_flush_interval(0)
+                recorder.set_dataset_attrs({"robolab_omy_collection": json.dumps(collection_metadata)})
+                if reset_key == RESET_KEY:
+                    keyboard = EpisodeReset()
+                else:
+                    from .collection_controls import CollectionControls
+
+                    keyboard = CollectionControls(reset_key, None)
+            if getattr(keyboard, "binding_check", None):
+                print(keyboard.binding_check, flush=True)
             xr_session.start()
             env.reset(seed=args.seed)
             if not xr_session.wait_for_display(app, env.sim.render):
                 return 0
             device = create_teleop_device("omy_leader", cfg.teleop_devices.devices, {})
             device.reset()
+            keyboard.clear()
             home = np.asarray([cfg.scene.robot.init_state.joint_pos[name] for name in ARM_JOINTS])
             gate = ReadyGate(device, home, tolerance_rad=args.ready_tolerance_rad,
-                             movement_rad=args.start_motion_rad, stable_s=args.ready_stable_s)
-            state = "waiting"
+                             movement_rad=args.start_motion_rad, stable_s=args.ready_stable_s, reset_key=reset_key)
+            preparation = ScenePreparation(env, args)
+            state = "settling"
             print(f"Task: {cfg.instruction}\nOutput: {output}", flush=True)
-            print(f"Return L100 to READY, then press {RESET_KEY} in the Isaac Sim window. "
-                  f"Move L100 to start; press {RESET_KEY} while recording to reset. Ctrl+C exits.", flush=True)
-            events_path = Path(output) / "collection_events.jsonl"
+            print(f"Collection target: {args.num_episodes} successful episodes "
+                  f"{'per layout' if session else 'for this task'}; unsuccessful attempts are retained.",
+                  flush=True)
+            if session and session.target_total_successes is not None:
+                print(f"Total success target across layouts: {session.total_successes}/"
+                      f"{session.target_total_successes}.", flush=True)
+            print(f"Return L100 to READY, then press {reset_key} in the Isaac Sim window. "
+                  f"Move L100 to start; press {reset_key} while recording to retry. "
+                  + (f"{next_key} skips to the next layout. " if session else "") + "Ctrl+C exits.", flush=True)
+            events_path = Path(root_output) / "collection_events.jsonl"
 
             def event(kind, **fields):
-                with events_path.open("a") as stream:
-                    stream.write(json.dumps({"event": kind, "attempt": attempt,
-                                             "wall_time_s": time.time(), "total_steps": total_steps,
-                                             **fields}) + "\n")
+                line = json.dumps({"event": kind, "attempt": progress.attempts,
+                                   "wall_time_s": time.time(), "total_steps": total_steps,
+                                   **({"task": args.task, "part": str(output.relative_to(root_output))}
+                                      if session else {}), **fields}) + "\n"
+                paths = [events_path]
+                if session:
+                    # Offline archival reads events beside each HDF5 file. Keep
+                    # that identity/time evidence as well as the session journal.
+                    paths.append(output / "collection_events.jsonl")
+                for path in paths:
+                    with path.open("a") as stream:
+                        stream.write(line)
+
+            def show_status():
+                if status is not None and session.current is not None:
+                    summary = session.summary()
+                    position = next(i for i, layout in enumerate(plan.layouts) if layout.task == args.task)
+                    status.update(object_name=plan.object_name, layout_index=position, layout_count=len(plan.layouts),
+                                  task=args.task, successes=progress.successes, target_successes=args.num_episodes,
+                                  attempts=progress.attempts, completed=summary["completed"], skipped=summary["skipped"],
+                                  state=state, reset_key=reset_key, next_key=next_key,
+                                  total_successes=session.total_successes,
+                                  target_total_successes=session.target_total_successes)
+                    if session.target_total_successes is not None:
+                        print(f"Total successes: {session.total_successes}/{session.target_total_successes}.", flush=True)
+                    print(f"{plan.object_name}: layout {position + 1}/{len(plan.layouts)} ({args.task}); "
+                          f"successes {progress.successes}/{args.num_episodes}; attempts {progress.attempts}; "
+                          f"completed {summary['completed']}, skipped {summary['skipped']}; {state.upper()}", flush=True)
+
+            show_status()
 
             def save_timing():
                 if not attempt_timing:
                     return None
-                path = output / f"attempt_{attempt:04d}_timing.npz"
+                path = output / f"attempt_{progress.attempts:04d}_timing.npz"
                 columns = tuple(zip(*attempt_timing))
                 np.savez(path, action_wall_ns=np.asarray(columns[0], dtype=np.int64),
                          step_done_wall_ns=np.asarray(columns[1], dtype=np.int64),
@@ -272,7 +436,7 @@ def run(args, app, *, xr_session):
                          leader_age_s=np.asarray(columns[4], dtype=np.float64),
                          source_wall_ns=np.asarray(columns[5], dtype=np.int64),
                          source_read_monotonic_ns=np.asarray(columns[6], dtype=np.int64))
-                (output / f"attempt_{attempt:04d}_performance.json").write_text(json.dumps({
+                (output / f"attempt_{progress.attempts:04d}_performance.json").write_text(json.dumps({
                     "active_control": timing.summary(env.step_dt),
                     "export": getattr(recorder, "export_timings", []),
                     "stepping_effective": getattr(cfg, "omy_stepping_effective", "ordinary"),
@@ -281,32 +445,79 @@ def run(args, app, *, xr_session):
                 attempt_timing.clear()
                 return path.name
 
-            def reset_scene(reason):
-                nonlocal active, state, attempt, attempt_steps
-                if active:
-                    finish_interrupted(env, True)
+            def finish_attempt(reason, results=(), *, already_exported=False):
+                nonlocal active
+                if not active:
+                    return
+                if session and attempt_steps == 0:
+                    recorder.clear()
                     active = False
-                    event("attempt_end", result=reason, timing_file=save_timing())
-                    attempt += 1
-                if attempt >= args.num_episodes:
+                    event("attempt_cancelled", reason=reason)
+                    return
+                if not already_exported:
+                    finish_interrupted(env, True)
+                active = False
+                event("attempt_end", result=results or reason, timing_file=save_timing())
+                if session:
+                    succeeded = bool(results) and all(result.get("success", False) for result in results)
+                    layout_recording.finalize(progress.attempts, succeeded, reason)
+                    progress.attempts, progress.successes = session.attempts, session.successes
+                else:
+                    progress.finish(results)
+                print(f"Attempt {progress.attempts} ended: {reason}; "
+                      f"successes {progress.successes}/{progress.target_successes}.", flush=True)
+
+            def save_part_summary():
+                (output / "omy_performance.json").write_text(json.dumps({
+                    "settings": settings, "last_window": timing.summary(env.step_dt),
+                    "total_steps": timing.total_steps, "contact_cache": contact_cache_stats(env),
+                    "collection": progress.summary(),
+                }, indent=2) + "\n")
+
+            def reset_scene(reason, *, skip_layout=False):
+                nonlocal state, attempt_steps, output, progress, settings, preparation
+                if active:
+                    finish_attempt(reason)
+                if session and session.total_target_reached:
+                    save_part_summary()
+                    event("layout_end", reason="total_success_target_reached", **progress.summary())
+                    return False
+                if session and (progress.complete or skip_layout):
+                    save_part_summary()
+                    event("layout_end", reason="success_target_reached" if progress.complete else "manual_skip",
+                          **progress.summary())
+                    session.advance(skipped=skip_layout and not progress.complete)
+                    if session.finished:
+                        return False
+                    progress = CollectionProgress(args.num_episodes, session.attempts, session.successes)
+                    output = session.start_part()
+                    if handoff is not None:
+                        handoff.add_recording(output)
+                    layout_recording.open(output)
+                    settings = performance_settings(env, args)
+                    event("layout_start", layout=session.current.metadata())
+                elif progress.complete:
                     return False
                 env.reset_eval_state()
-                env.reset(seed=args.seed)  # repeat the same object arrangement
+                env.reset(seed=args.seed)
                 device.reset()
                 attempt_steps = 0
                 attempt_timing.clear()
                 keyboard.clear()
                 if pacer is not None:
                     pacer.reset()
-                state = "waiting"
+                preparation = ScenePreparation(env, args)
+                state = "settling"
                 gate._near_since = None
                 gate._near_vector = None
-                print(f"Scene reset. Return L100 to READY, then press {RESET_KEY}.", flush=True)
+                gate._anchor = None
+                print(f"Scene reset; settling before READY. {reset_key} retries; {next_key} skips a layout.", flush=True)
+                show_status()
                 return True
 
             report_start = time.perf_counter()
             next_step = report_start
-            while app.is_running() and attempt < args.num_episodes:
+            while app.is_running() and not (session.finished if session else progress.complete):
                 if not xr_session.ready():
                     if active:
                         if not reset_scene("xr_lost"):
@@ -315,33 +526,64 @@ def run(args, app, *, xr_session):
                         state = "waiting"
                         gate._near_since = None
                         gate._near_vector = None
+                        gate._anchor = None
+                        show_status()
                     if not xr_session.wait_for_display(app, env.sim.render):
                         break
                     keyboard.clear()
                     continue
 
-                # Pump Kit's keyboard and XR display in the idle states; physics
-                # and recorder terms remain untouched until movement starts.
+                # Preparation advances physics without admitting a recorded
+                # command. READY and ARMED hold the prepared scene still.
                 if state != "recording":
                     env.sim.render()
+                    if session and keyboard.take_next():
+                        if not reset_scene("layout_skip", skip_layout=True):
+                            break
+                        continue
+                    if state in ("settling", "preparation_failed"):
+                        if keyboard.take():
+                            if not reset_scene("preparation_retry"):
+                                break
+                        elif state == "settling":
+                            report = preparation.advance()
+                            if report["status"] != "settling":
+                                from robolab.core.omy_teleop.collection_handoff import replace_report
+
+                                replace_report(output / "preparation_latest.json", report)
+                                event("scene_preparation", **report)
+                                state = "waiting" if report["status"] == "ready" else "preparation_failed"
+                                keyboard.clear()
+                                gate._near_since = gate._near_vector = gate._anchor = None
+                                print("Scene settled; return L100 to READY and confirm." if state == "waiting"
+                                      else "Scene preparation failed: " + "; ".join(report["reasons"]), flush=True)
+                                show_status()
+                        continue
                     if state == "waiting":
                         aligned = gate.observe_waiting()
                         if keyboard.take():
                             if aligned and gate.confirm():
                                 device.reset()
                                 state = "armed"
-                                event("armed")
+                                event("armed", wrist_turn_offset_rad=(
+                                    getattr(device, "last_input_sample", None) or {}
+                                ).get("wrist_turn_offset_rad", 0.0))
                                 print("READY confirmed. Move L100 to start recording.", flush=True)
+                                show_status()
                             else:
-                                print(f"L100 is not steady at calibrated READY; adjust and press {RESET_KEY} again.", flush=True)
+                                print(f"L100 is not steady at calibrated READY: {gate.rejection_reason()}; "
+                                      f"press {reset_key} again.", flush=True)
                     elif keyboard.take():
                         state = "waiting"
                         gate._near_since = None
                         gate._near_vector = None
-                        print(f"Arming cancelled. Press {RESET_KEY} at READY.", flush=True)
+                        gate._anchor = None
+                        print(f"Arming cancelled. Press {reset_key} at READY.", flush=True)
+                        show_status()
                     elif gate.moved():
-                        recorder.set_episode_index(attempt, env_ids=[0])
+                        recorder.set_episode_index(progress.attempts, env_ids=[0])
                         recorder.set_episode_seed(args.seed, env_ids=[0])
+                        recorder.set_episode_preparation(getattr(env, "omy_preparation_report", {}), env_ids=[0])
                         active = True
                         attempt_steps = 0
                         attempt_timing.clear()
@@ -351,11 +593,17 @@ def run(args, app, *, xr_session):
                             pacer.reset()
                         next_step = report_start = time.perf_counter()
                         event("attempt_start")
-                        print(f"Attempt {attempt + 1} recording.", flush=True)
+                        show_status()
+                        print(f"Attempt {progress.attempts + 1} recording; "
+                              f"successes {progress.successes}/{progress.target_successes}.", flush=True)
                     else:
                         time.sleep(0.005)
                     continue
 
+                if session and keyboard.take_next():
+                    if not reset_scene("layout_skip", skip_layout=True):
+                        break
+                    continue
                 if keyboard.take():
                     if not reset_scene("manual_reset"):
                         break
@@ -398,19 +646,32 @@ def run(args, app, *, xr_session):
                     else:
                         next_step = time.perf_counter()
                 timing.end_step(work_end=work_end)
-                if time.perf_counter() - report_start >= args.stats_interval:
+                if args.stats_interval > 0 and time.perf_counter() - report_start >= args.stats_interval:
                     q = env.scene["robot"].data.joint_pos[0, joint_ids]
                     error = (q - action[:7]).abs().max().item()
                     print(timing.report(env.step_dt), flush=True)
                     print(f"OMY: max joint error {error:.4f} rad; step {total_steps}", flush=True)
+                    from robolab.core.task.conditionals import object_resting_in_container, resting_in_container_diagnostics
+
+                    terms = env.termination_manager
+                    success = terms.get_term_cfg("success") if "success" in terms.active_terms else None
+                    if success is not None and success.func is object_resting_in_container:
+                        diagnostic = resting_in_container_diagnostics(env, success.params)
+                        event("placement_check", **diagnostic)
+                        if diagnostic["checks"]["inside"]:
+                            print("Placement check: " + json.dumps(diagnostic, sort_keys=True), flush=True)
                     report_start = time.perf_counter()
+                skip_after_step = session is not None and keyboard.take_next()
                 if env.all_terminated:
                     results = env.get_env_results()
-                    active = False  # environment already exported on termination
-                    event("attempt_end", result=results, timing_file=save_timing())
-                    attempt += 1
-                    print(f"Attempt {attempt}: {results}", flush=True)
-                    if not reset_scene("terminal"):
+                    finish_attempt("success" if all(result.get("success", False) for result in results)
+                                   else "terminal_failure", results, already_exported=True)
+                    print(f"Attempt {progress.attempts}: {results}; "
+                          f"successes {progress.successes}/{progress.target_successes}.", flush=True)
+                    if not reset_scene("terminal", skip_layout=skip_after_step):
+                        break
+                elif skip_after_step:
+                    if not reset_scene("layout_skip", skip_layout=True):
                         break
                 elif attempt_steps >= args.max_attempt_steps:
                     if not reset_scene("attempt_step_limit"):
@@ -420,38 +681,57 @@ def run(args, app, *, xr_session):
                         break
                 if args.steps and total_steps >= args.steps:
                     break
+            if active:
+                finish_attempt("interrupted")
+            if session:
+                event("collection_end", reason="pass_finished" if session.finished else "interrupted",
+                      **session.summary())
+                end_event_written = True
+                print(f"Collection session: {json.dumps(session.summary())}\nSession directory: {session.root}", flush=True)
+            elif progress.complete:
+                event("collection_end", reason="success_target_reached", **progress.summary())
+                print(f"Collection complete: {progress.successes}/{progress.target_successes} successful episodes "
+                      f"from {progress.attempts} attempts.", flush=True)
             xr_session.metadata["completed"] = True
             return 0
         except KeyboardInterrupt:
             print("Stopping OMY collection.", flush=True)
             return 130
         finally:
-            if pacer is not None:
-                pacer.close()
-            timing.close()
-            if cache is not None:
-                cache.close()
-            if env is not None:
-                print(timing.report(env.step_dt), flush=True)
-                try:
-                    (output / "omy_performance.json").write_text(json.dumps({
-                        "settings": settings, "last_window": timing.summary(env.step_dt),
-                        "total_steps": timing.total_steps,
-                        "contact_cache": contact_cache_stats(env),
-                    }, indent=2) + "\n")
-                    if active:
-                        finish_interrupted(env, True)
-                        event("attempt_end", result="interrupted", timing_file=save_timing())
-                finally:
-                    if device is not None:
-                        device.close()
-                    if keyboard is not None:
-                        keyboard.close()
-                    try:
-                        xr_session.close(env.sim.render)
-                    finally:
-                        (output / "xr_status.json").write_text(json.dumps(xr_session.metadata, indent=2) + "\n")
-                        close_recording(env)
-                        env.close()
+            from contextlib import ExitStack
 
-    return collect()
+            # Every resource must close even if finalization or another cleanup fails.
+            with ExitStack() as cleanup:
+                if env is not None:
+                    cleanup.callback(env.close)
+                    cleanup.callback(close_recording, env)
+
+                    def save_xr_status():
+                        (output / "xr_status.json").write_text(json.dumps(xr_session.metadata, indent=2) + "\n")
+
+                    def close_xr():
+                        if session:
+                            xr_session.metadata["layout_collection"] = session.summary()
+                        else:
+                            xr_session.metadata.update(progress.summary())
+                        xr_session.close(env.sim.render)
+
+                    cleanup.callback(save_xr_status)
+                    cleanup.callback(close_xr)
+                for resource in (status, keyboard, device, cache, timing, pacer):
+                    if resource is not None:
+                        cleanup.callback(resource.close)
+                if env is not None:
+                    print(timing.report(env.step_dt), flush=True)
+                    if active:
+                        finish_attempt("interrupted")
+                    if session and event is not None and not end_event_written:
+                        event("collection_end", reason="interrupted", **session.summary())
+                    if save_part_summary is not None:
+                        save_part_summary()
+
+    try:
+        return collect()
+    finally:
+        if session is not None:
+            session.close()

@@ -68,7 +68,12 @@ def readme(tasks: list[dict], scenes: list[dict], source: dict) -> str:
         "# Simple pick-and-place benchmark", "",
         f"{len(tasks):,} tasks and matching scenes across {len(counts)} catalog entries. "
         "Each task grasps one tabletop item and places it into `grey_bin`, with a "
-        "50-second episode limit. Success requires container contact and gripper detachment.", "",
+        "50-second episode limit. Success requires a released object supported by an upright, "
+        "stationary bin, with no table contact. Both object and bin must remain below "
+        "0.05 m/s linear speed and 0.5 rad/s angular speed, with poses staying within "
+        "1 mm and 0.5 degrees of their initial settled poses for 0.5 simulated seconds. "
+        "Protrusion and stable rim-spanning placements are accepted. Termination and "
+        "full subtask credit use the same condition.", "",
         "## Filtering", "",
         f"The original {source['original']['task_count']:,} layouts (50 per catalog entry) "
         f"were filtered using `{DEFAULT_FILTER.relative_to(ROOT)}`. "

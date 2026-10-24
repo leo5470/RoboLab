@@ -75,6 +75,14 @@ def _supported(req, p):
     _contact(req, p["object"], p.get("surface", p.get("reference_object")), force=True)
 
 
+def _resting_in_container(req, p):
+    _spatial(req, {**p, "require_gripper_detached": True})
+    req.velocities.update(_names(p["object"]) + _names(p["container"]))
+    _contact(req, p["object"], p["container"], force=True)
+    if p.get("exclude_contact_with"):
+        _contact(req, p["object"], p["exclude_contact_with"])
+
+
 def _grasp(req, p):
     _contact(req, p["object"], p.get("gripper_name", "gripper"))
 
@@ -116,6 +124,7 @@ def predicate_registry(conditionals=None):
             rules[getattr(conditionals, name)] = _spatial
     for name, rule in {
         "object_on_top": _supported, "object_outside_of_and_on_surface": _supported,
+        "object_resting_in_container": _resting_in_container,
         "object_grabbed": _grasp, "object_dropped": _grasp, "object_picked_up": _picked_up,
         "object_in_contact": lambda req, p: _contact(req, p["object1"], p["object2"]),
         "objects_stationary": lambda req, p: req.velocities.update(_names(p["object"])),
@@ -148,14 +157,14 @@ def default_registry():
 def default_recorder_types():
     from robolab.core.events import basic_recorders
     from robolab.core.events.subtask_recorder import SubtaskCompletionRecorderTerm
-    from .recording import BoundaryTimeRecorder
+    from .recording import BoundaryTimeRecorder, LeaderStateRecorder
 
     types = {getattr(basic_recorders, name) for name in (
         "InitialStateRecorder", "PostStepStatesRecorder", "PreStepActionsRecorder",
         "PreStepFlatPolicyObservationsRecorder", "PostStepBBoxRecorder",
         "PostStepEndEffectorPoseRecorder", "PostStepRobotRootPoseRecorder",
     )}
-    return types | {SubtaskCompletionRecorderTerm, BoundaryTimeRecorder}, SubtaskCompletionRecorderTerm
+    return types | {SubtaskCompletionRecorderTerm, BoundaryTimeRecorder, LeaderStateRecorder}, SubtaskCompletionRecorderTerm
 
 
 def add_callable(req, func, params, source, registry, *, event=False):

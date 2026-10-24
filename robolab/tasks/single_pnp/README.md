@@ -1,6 +1,6 @@
 # Simple pick-and-place benchmark
 
-6,754 tasks and matching scenes across 136 catalog entries. Each task grasps one tabletop item and places it into `grey_bin`, with a 50-second episode limit. Success requires container contact and gripper detachment.
+6,754 tasks and matching scenes across 136 catalog entries. Each task grasps one tabletop item and places it into `grey_bin`, with a 50-second episode limit. Success requires a released object supported by an upright, stationary bin, with no table contact. Both object and bin must remain below 0.05 m/s linear speed and 0.5 rad/s angular speed, with poses staying within 1 mm and 0.5 degrees of their initial settled poses for 0.5 simulated seconds. Protrusion and stable rim-spanning placements are accepted. Termination and full subtask credit use the same condition.
 
 ## Filtering
 

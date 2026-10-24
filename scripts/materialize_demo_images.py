@@ -36,6 +36,9 @@ import os
 import shutil
 import sys
 import traceback
+import time
+
+_BOOT_STARTED = time.perf_counter()
 
 os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "Y")
 
@@ -49,6 +52,7 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("--input", "-i", required=True, help="State-only recording (HDF5) to materialize.")
 parser.add_argument("--output", "-o", required=True, help="Path of the image demonstration to write.")
+parser.add_argument("--batch-queue", help=argparse.SUPPRESS)
 parser.add_argument(
     "--episode",
     type=int,
@@ -151,25 +155,30 @@ from robolab.core.omy_postprocess.cameras import (  # noqa: E402
 from robolab.core.omy_postprocess.io import sha256_file  # noqa: E402
 from robolab.core.task.task_index import normalize_task_dirs, resolve_selected_task  # noqa: E402
 
-omy_task_resolution = None
-try:
-    recording_metadata, omy_validation = preflight_omy_materialization(
-        args_cli.input, episodes=args_cli.episodes, task_override=args_cli.task,
-        require_native15=args_cli.require_native15,
+def _preflight(cli):
+    resolution = None
+    metadata, validation = preflight_omy_materialization(
+        cli.input, episodes=cli.episodes, task_override=cli.task,
+        require_native15=cli.require_native15,
     )
-    if args_cli.require_native15 and not recording_metadata.get("omy_recording"):
-        parser.error("--require-native15 requires an OMY recording")
-    if recording_metadata.get("omy_recording"):
-        recorded_dirs = recording_metadata.get("task_dirs")
-        if (args_cli.task_dirs is not None and recorded_dirs is not None
-                and normalize_task_dirs(args_cli.task_dirs) != normalize_task_dirs(recorded_dirs)):
+    if cli.require_native15 and not metadata.get("omy_recording"):
+        raise ValueError("--require-native15 requires an OMY recording")
+    if metadata.get("omy_recording"):
+        recorded_dirs = metadata.get("task_dirs")
+        if (cli.task_dirs is not None and recorded_dirs is not None
+                and normalize_task_dirs(cli.task_dirs) != normalize_task_dirs(recorded_dirs)):
             raise ValueError("--task-dirs conflicts with the recording's task directories")
-        omy_task_resolution = resolve_selected_task(
-            recording_metadata["task"], args_cli.task_dirs or recorded_dirs,
-            expected_source=recording_metadata.get("task_source"),
+        resolution = resolve_selected_task(
+            metadata["task"], cli.task_dirs or recorded_dirs,
+            expected_source=metadata.get("task_source"),
         )
-    elif args_cli.task_dirs is not None:
-        parser.error("--task-dirs in this materializer is supported only for OMY recordings")
+    elif cli.task_dirs is not None:
+        raise ValueError("--task-dirs in this materializer is supported only for OMY recordings")
+    return metadata, validation, resolution
+
+
+try:
+    recording_metadata, omy_validation, omy_task_resolution = _preflight(args_cli)
 except (ValueError, OSError) as exc:
     parser.error(str(exc))
 
@@ -332,7 +341,7 @@ def _describe(demo_group: h5py.Group) -> str:
     return "\n".join(sorted(lines))
 
 
-def main() -> int:
+def main(env_cache=None) -> int:
     compression = None if args_cli.hdf5_compression == "none" else args_cli.hdf5_compression
     output_dir = os.path.dirname(os.path.abspath(args_cli.output)) or "."
     os.makedirs(output_dir, exist_ok=True)
@@ -365,8 +374,17 @@ def main() -> int:
     env = None
     materialized = 0
     try:
-        env, resolutions, asset_snapshot = _build_env(metadata)
-        env.reset()
+        if env_cache is None:
+            env, resolutions, asset_snapshot = _build_env(metadata)
+        else:
+            env, resolutions, asset_snapshot = env_cache.get(args_cli, metadata, lambda: _build_env(metadata))
+            env.output_dir = scratch_dir
+            from pathlib import Path
+            import json
+
+            Path(scratch_dir).mkdir(parents=True, exist_ok=True)
+            Path(scratch_dir, "env_cfg.json").write_text(json.dumps(env.cfg.to_dict(), default=str))
+        env.recorder_manager.clear()
 
         # The output is built beside its destination and moved into place only
         # once every episode has been rendered, so an interrupted run never
@@ -414,6 +432,7 @@ def main() -> int:
                         env, episode, demo,
                         compression=compression,
                         renders_per_frame=args_cli.renders_per_frame,
+                        initial_warmup_renders=8,
                         progress=on_frame,
                     )
                 finally:
@@ -449,6 +468,7 @@ def main() -> int:
                     "episodes": selected,
                     "camera_resolutions": {name: list(res) for name, res in resolutions.items()},
                     "renders_per_frame": args_cli.renders_per_frame,
+                    "initial_warmup_renders": 8,
                     "image_groups": list(IMAGE_OBS_GROUPS),
                     "observation_alignment": "pre_action",
                     "alignment": "pre_action",
@@ -489,7 +509,7 @@ def main() -> int:
                 print(_describe(final["data"][name]))
         return 0
     finally:
-        if env is not None:
+        if env is not None and env_cache is None:
             env.close()
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
@@ -497,7 +517,12 @@ def main() -> int:
 if __name__ == "__main__":
     exit_code = 1
     try:
-        exit_code = main()
+        if args_cli.batch_queue:
+            from robolab.core.omy_postprocess.batch_worker import serve
+
+            exit_code = serve(globals(), parser, simulation_app)
+        else:
+            exit_code = main()
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
     except Exception as exc:

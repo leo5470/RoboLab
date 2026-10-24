@@ -8,7 +8,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
 from robolab.core.scenes.utils import import_scene
-from robolab.core.task.conditionals import object_in_container, pick_and_place
+from robolab.core.task.conditionals import object_resting_in_container, pick_and_place
 from robolab.core.task.task import Task
 
 
@@ -16,14 +16,17 @@ from robolab.core.task.task import Task
 class SimplePnp300Jello26Terminations:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     success = DoneTerm(
-        func=object_in_container,
+        func=object_resting_in_container,
         params={
             "object": 'jello',
             "container": "grey_bin",
             "gripper_name": "gripper",
-            "tolerance": 0.01,
-            "require_contact_with": True,
-            "require_gripper_detached": True,
+            "exclude_contact_with": "table",
+            "settle_time_s": 0.5,
+            "linear_threshold": 0.05,
+            "angular_threshold": 0.5,
+            "position_tolerance": 0.001,
+            "rotation_tolerance_deg": 0.5,
         },
     )
 
@@ -46,5 +49,14 @@ class SimplePnp300Jello26Task(Task):
             container="grey_bin",
             logical="all",
             score=1.0,
+            placement_func=object_resting_in_container,
+            placement_params={
+                "exclude_contact_with": "table",
+                "settle_time_s": 0.5,
+                "linear_threshold": 0.05,
+                "angular_threshold": 0.5,
+                "position_tolerance": 0.001,
+                "rotation_tolerance_deg": 0.5,
+            },
         )
     ]

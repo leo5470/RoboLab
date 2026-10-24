@@ -337,6 +337,15 @@ class StreamingHDF5DatasetFileHandler(DatasetFileHandlerBase):
 
         self._hdf5_file_stream.flush()
 
+    def set_episode_attrs(self, episode_index: int, attrs: dict) -> None:
+        """Attach collection provenance to a finalized episode and flush it."""
+        self._raise_if_not_initialized()
+        group = self._hdf5_data_group[f"demo_{episode_index}"]
+        if episode_index in self._open_episodes or "success" not in group.attrs:
+            raise RuntimeError("Episode attributes require a finalized episode")
+        group.attrs.update(attrs)
+        self._hdf5_file_stream.flush()
+
     def discard_episode(self, episode_index: int | None = None) -> None:
         """Drop an incrementally written episode without finalizing it."""
         self._raise_if_not_initialized()

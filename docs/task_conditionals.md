@@ -60,7 +60,7 @@ Base functions; can be used for task `Terminations` as well as `subtasks`.
 #### Composite Functions
 These expand into multiple atomic subtasks. These cannot be used for `Terminations`.
 - `pick_and_place(object, container, logical)`: Picks up objects and places them in a container
-  - Automatically creates the sequence: grab → move above → drop → verify in container
+  - Creates the sequence: grab → verify placement; `placement_func` and `placement_params` customize the final check
   - Supports multiple objects with "all" or "any" completion logic
 
 ### Frames in spatial conditions
@@ -119,6 +119,77 @@ i.e., the centroid satisfies every face's half-space constraint simultaneously.
 - **Per-step cost.** One `quat_apply`, one `quat_apply_inverse`, one $(F, 3) \cdot (3,) + (F,)$ matmul-and-max — fully vectorized across envs. Precomputed hull data is cached per body on the `WorldState`.
 
 ### Contact Force Cone Detection
+
+#### `object_resting_in_container` — Observed Settled Placement
+
+Use this condition when success must wait for an object to land and stop moving.
+Every requirement must hold over consecutive observations spanning `settle_time_s`
+simulated seconds (default **0.5 s**):
+
+- The object's hull centroid satisfies the open-top containment test above.
+- The container supplies upward support within a 45° force cone; the minimum
+  contact-force magnitude is `support_force_threshold` (**0.01 N** by default).
+- The object touches none of the named grippers. Set `exclude_contact_with="table"`
+  to also reject placements supported by the tabletop.
+- Both object and container have linear speed below `linear_threshold` (**0.05 m/s**)
+  and angular speed below `angular_threshold` (**0.5 rad/s**).
+- Both poses stay within `position_tolerance` (**1 mm**) and
+  `rotation_tolerance_deg` (**0.5°**) of their poses at the start of the interval.
+- The container's local +z is within `max_container_tilt_deg` (**15°**) of world up.
+
+Protruding objects and stable placements spanning the rim are accepted; full
+enclosure below the rim is not required. The existing gripper-detachment contact
+threshold is 0.1 N. Excluded surfaces use `support_force_threshold`.
+
+The pose requirement rejects slow sliding and rotation even below the velocity
+caps. Contact solvers can report noisy instantaneous velocities for an object
+whose pose barely changes; the velocity caps accommodate that noise while
+the pose bounds establish observed rest. For example, the pilot spatula changed
+by less than 0.003 mm and 0.006° over four seconds despite angular-velocity samples
+reaching 0.29 rad/s. Under the production OMY profile (16 position iterations),
+a supported wooden bowl varied by less than 0.05 mm and 0.05° across eight seconds
+while reporting linear speeds of 0.032–0.038 m/s. The 0.05 m/s cap allows this
+solver noise; genuine sliding at 0.03 m/s still fails the 1 mm pose bound.
+
+Motion, loss of support/release/containment, excluded-surface contact, or a gap in
+observations restarts the interval. Episode resets clear it per environment.
+Repeated batched or scalar calls in the same simulation step do not advance the
+clock. Identically parameterized termination and subtask checks share the same
+interval, so placement credit agrees with termination on the success frame.
+
+```python
+success = DoneTerm(
+    func=object_resting_in_container,
+    params={"object": "apple", "container": "grey_bin", "exclude_contact_with": "table"},
+)
+subtasks = [
+    pick_and_place(
+        object="apple", container="grey_bin",
+        placement_func=object_resting_in_container,
+        placement_params={"exclude_contact_with": "table"},
+    )
+]
+```
+
+Other `pick_and_place` callers retain their existing placement check unless they
+explicitly supply `placement_func`. `object_in_container` also retains its existing
+defaults. No trajectory prediction is used by the resting check.
+
+OMY collection writes a `placement_check` snapshot to `collection_events.jsonl`
+at each statistics interval. It includes failed requirements, object/bin speeds,
+support force, observed settling time, and pose drift. When the object is inside
+the container, the snapshot is also printed as `Placement check:` in the console.
+These diagnostic reads do not advance or reset the timer, and remain available
+even if an attempt is interrupted before its recording is finalized.
+
+To check the production OMY stepping, contact-sensor and solver settings without
+a leader or headset:
+
+```bash
+.venv/bin/python scripts/check_resting_pnp.py \
+    --task SimplePnp034CannedMushrooms00Task --omy-profile \
+    --output-dir output/resting_can_check
+```
 
 #### `object_on_top` — Stable Support Detection
 

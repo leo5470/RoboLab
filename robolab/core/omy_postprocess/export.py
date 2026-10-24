@@ -165,6 +165,8 @@ def _validate_group(group: h5py.Group, metadata: Mapping[str, Any], *, source_sh
         if not review.get("reviewer") or not review.get("reason"):
             raise ExportError("Recorded review requires a reviewer and reason")
     if not diagnostic:
+        if result.get("training_excluded"):
+            raise ExportError("Recording is explicitly excluded from training; use diagnostic mapping to inspect it")
         if result["outcome"] != "success":
             raise ExportError("Training selection requires a successful episode; use diagnostic mapping to inspect failures")
         warning_codes = {item["code"] for item in result["warnings"]}
