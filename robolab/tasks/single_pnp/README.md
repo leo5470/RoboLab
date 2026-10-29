@@ -20,7 +20,7 @@ Run from the RoboLab repository root with an already-running pi05 server:
     --output-folder-name simple_pnp_smoke_test
 ```
 
-Tasks register automatically at startup. Omit `--task` to select the whole set; use explicit task batches to limit registration time and memory. No additional exclusion filtering is needed for this committed task set.
+Tasks register automatically at startup. Omit `--task` to select the whole set; use explicit task batches to limit registration time and memory. Historical launch filtering does not certify setup geometry or graspability. See the [scene audit and qualification process](../../../docs/scene_generation_investigation_20261025.md) before selecting layouts for collection or evaluation.
 
 Run `git lfs pull` after cloning to obtain the official assets and the five repaired models in `assets/objects/repaired/`. Small generated scene layers are stored as ordinary text files. Existing RoboLab/IsaacLab dependencies and the policy server must be installed separately. Repaired models use relative texture paths so the repository can be installed at any location.
 

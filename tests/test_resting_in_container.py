@@ -21,6 +21,7 @@ import pytest
 import torch
 
 import robolab.constants
+from robolab.core.omy_teleop.boundary import shared_placement_condition
 from robolab.core.omy_teleop.requirements import TaskRequirements, add_callable, predicate_registry
 from robolab.core.task.decorators import atomic, composite
 from robolab.core.task.hull_check import build_local_hull, point_in_hull
@@ -57,6 +58,7 @@ def runtime():
         "np": np, "torch": torch, "math": math, "partial": partial, "reduce": reduce,
         "robolab": robolab, "DEBUG": False, "atomic": atomic, "composite": composite,
         "get_world": lambda env: env.world, "point_in_hull": point_in_hull,
+        "shared_placement_condition": shared_placement_condition,
         "quat_apply": quat_apply,
         "quat_apply_inverse": lambda quat, vector: quat_apply(quat * torch.tensor([1, -1, -1, -1]), vector),
         "StatusCode": StatusCode, "func_as_str": func_as_str, "get_callable_info": get_callable_info,

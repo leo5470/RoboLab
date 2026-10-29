@@ -318,6 +318,10 @@ class SpatialSolver:
         no_progress_count = 0
 
         for iteration in range(max_iterations):
+            # Clamping changes pairwise distances: do it BEFORE collision
+            # checks, never after declaring a layout collision-free.
+            if not self._clamp_to_table(object_states, object_dims, fixed_objects):
+                return False
             collisions = self._check_collisions(object_states, object_dims)
 
             if not collisions:
@@ -372,16 +376,14 @@ class SpatialSolver:
                             object_dims[obj2],
                         )
 
-        # If we're close to collision-free, accept it (physics will handle small overlaps)
+        # Validate the final, already-clamped positions without mutating them.
         final_collisions = self._check_collisions(object_states, object_dims)
-        num_objects = len([s for s in object_states.values() if s.x is not None])
 
         # STRICT: NO collisions allowed - physics settling requires collision-free start
-        if len(final_collisions) == 0:
+        if len(final_collisions) == 0 and self._check_table_bounds(object_states, object_dims):
             print(
                 f"[SpatialSolver] ✓ All collisions resolved - scene is collision-free"
             )
-            self._check_table_bounds(object_states, object_dims)
             return True
 
         print(
@@ -410,11 +412,12 @@ class SpatialSolver:
                 if state2.x is None or state2.y is None:
                     continue
 
-                # Simple circle-based collision check
+                # Circumscribed circles include rectangular corners at any yaw.
+                # max(width, depth)/2 underestimates the rotated footprint.
                 dims1 = object_dims[name1]
                 dims2 = object_dims[name2]
-                radius1 = max(dims1[0], dims1[1]) / 2 + self.collision_margin
-                radius2 = max(dims2[0], dims2[1]) / 2 + self.collision_margin
+                radius1 = math.hypot(dims1[0], dims1[1]) / 2 + self.collision_margin
+                radius2 = math.hypot(dims2[0], dims2[1]) / 2 + self.collision_margin
 
                 dist = np.sqrt((state1.x - state2.x) ** 2 + (state1.y - state2.y) ** 2)
                 min_dist = radius1 + radius2
@@ -434,7 +437,7 @@ class SpatialSolver:
                 continue
 
             dims = object_dims[name]
-            radius = max(dims[0], dims[1]) / 2
+            radius = math.hypot(dims[0], dims[1]) / 2
 
             if (
                 state.x - radius < self.min_x
@@ -442,10 +445,22 @@ class SpatialSolver:
                 or state.y - radius < self.min_y
                 or state.y + radius > self.max_y
             ):
-                # Clamp to bounds
-                state.x = np.clip(state.x, self.min_x + radius, self.max_x - radius)
-                state.y = np.clip(state.y, self.min_y + radius, self.max_y - radius)
+                return False
 
+        return True
+
+    def _clamp_to_table(self, object_states, object_dims, fixed_objects):
+        for name, state in object_states.items():
+            if state.x is None or state.y is None:
+                continue
+            radius = math.hypot(*object_dims[name][:2]) / 2
+            if 2 * radius > min(self.table_width, self.table_depth):
+                return False
+            x = float(np.clip(state.x, self.min_x + radius, self.max_x - radius))
+            y = float(np.clip(state.y, self.min_y + radius, self.max_y - radius))
+            if name in fixed_objects and (x != state.x or y != state.y):
+                return False
+            state.x, state.y = x, y
         return True
 
     def _move_away_from_fixed(
@@ -488,7 +503,7 @@ class SpatialSolver:
         movable_state.y = fixed_state.y + dy * required_sep
 
         # Clamp to table bounds
-        radius_xy = max(movable_dims[0], movable_dims[1]) / 2 + self.collision_margin
+        radius_xy = math.hypot(*movable_dims[:2]) / 2 + self.collision_margin
         movable_state.x = max(
             self.min_x + radius_xy, min(self.max_x - radius_xy, movable_state.x)
         )
@@ -521,8 +536,8 @@ class SpatialSolver:
         dy /= dist
 
         # Calculate required separation
-        radius1 = max(dims1[0], dims1[1]) / 2 + self.collision_margin
-        radius2 = max(dims2[0], dims2[1]) / 2 + self.collision_margin
+        radius1 = math.hypot(dims1[0], dims1[1]) / 2 + self.collision_margin
+        radius2 = math.hypot(dims2[0], dims2[1]) / 2 + self.collision_margin
         required_dist = radius1 + radius2
 
         # Push apart more aggressively for large objects

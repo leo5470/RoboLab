@@ -46,11 +46,26 @@ python assets/scenes/_utils/settle_scenes.py --scene my_scene.usda --replace
 python assets/scenes/_utils/settle_scenes.py --scene my_scene.usda --replace --screenshot
 ```
 
-It is recommended that you re-open the scenes and check that all the objects you intended to place looks good.
+Settling is not a validation gate: the utility exports after a fixed number of
+updates, including objects that have fallen or tipped. Check all objects for
+support, retained intended orientation, clearance, and grasp access before
+accepting the scene. Place using transformed geometry bottoms and actual table
+height; `height / 2` is valid only for assets with centered origins.
+
+For Simple-PnP layouts, run `python tools/audit_simple_pnp_scenes.py --report
+output/scene_audit.json` in a USD-enabled Python environment before physics.
+The audit checks composed geometry, including the actual bin scale. Follow the
+[generation and qualification process](scene_generation_investigation_20261025.md)
+for simulation and grasp checks; a static pass alone does not certify a task.
 
 ## AI Workflows: Scene Generation
 
-We provide a Claude Code agent skill that you can use to generate scene files from natural language descriptions using the `/robolab-scenegen` skill. Describe the objects and arrangement you want, and the agent will produce a complete, valid USDA scene file, run physics settling, and generate a screenshot. See [`skills/robolab-scenegen/`](../skills/robolab-scenegen/) for details.
+Use the [robolab-scenegen skill](../.agents/skills/robolab-scenegen/SKILL.md) to
+create or repair scenes from natural language. It uses composed geometry for
+placement and reports geometry, physics, and grasp checks separately. Simulation
+or robot-specific checks remain pending when their dependencies are unavailable;
+file generation alone does not certify a usable start. The linked validation
+reference describes the checks for separate tabletop objects, stacks, and containers.
 
 ## To use the scenes in tasks
 

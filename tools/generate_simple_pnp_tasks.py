@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,17 @@ RESTING_PARAMS = {
     "rotation_tolerance_deg": 0.5,
 }
 SUCCESS_CONDITION = "object_resting_in_container: released, bin-supported and pose-stable for 0.5 seconds"
+
+
+def validate_scene_geometry(scenes: list[dict]) -> None:
+    """Do not publish new tasks from unchecked catalog-only placements."""
+    sys.path.insert(0, str(ROOT))
+    from tools.audit_simple_pnp_scenes import audit_scene
+
+    for scene in scenes:
+        report, _stage = audit_scene(SCENE_DIR / scene["scene"], scene["target"]["name"])
+        if report["issues"]:
+            raise ValueError(f"Scene geometry failed for {scene['scene']}: " + "; ".join(report["issues"]))
 
 
 def class_name(scene_stem: str) -> str:
@@ -121,6 +133,10 @@ def main() -> None:
                 raise ValueError(f"Task has custom edits; refusing to overwrite: {path}")
     elif OUT_DIR.exists() and any(OUT_DIR.iterdir()):
         raise FileExistsError(f"refusing to overwrite non-empty task directory: {OUT_DIR}")
+    if not args.update_existing:
+        # Complete preflight before writing any task. Updating success criteria
+        # on an existing library does not claim to revalidate its scene physics.
+        validate_scene_geometry(scenes)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     records = []
