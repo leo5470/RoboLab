@@ -1,45 +1,24 @@
-# Object Catalog Reference
+# Resolving assets
 
-The full object catalog is at `assets/objects/object_catalog.json` (312 objects). Read it to get exact names, dimensions, and USD paths.
+Read the current `assets/objects/object_catalog.json`; its entries and counts can
+change. Entries provide `name`, `usd_path`, `dims`, and descriptive/class fields.
+Paths are normally relative to the repository root. A name is not a unique asset
+identifier: distinguish duplicate names by catalog index and payload path.
 
-## Catalog Entry Format
+Use descriptions/classes to choose candidates, then inspect the actual USD.
+Catalog dimensions help selection, but do not encode the root pivot, intended
+root scale overrides, stable poses, collision proxy, cavity, or grasp regions.
+Do not invent those fields or silently substitute similarly named assets.
 
-Each entry has:
-```json
-{
-  "name": "banana",           // prim name used in scene
-  "usd_path": "assets/objects/ycb/banana.usd",  // relative path to USD file
-  "class": "fruit",           // object category
-  "description": "A yellow banana",
-  "dims": [0.19, 0.04, 0.04] // bounding box [x, y, z] in meters
-}
-```
+Fixtures may live under `assets/fixtures/` and are not necessarily in the object
+catalog. For example, resolve `grey_bin`'s actual payload and scale before planning
+space around it. Never copy assumed dimensions from an old manifest as ground truth.
 
-## Object Classes
+For custom assets, record the supplied path, selected payload/default prim, units,
+scale, and measured geometry. Use unique instance names in the scene and retain
+the asset identity separately. Set relative paths from the **new scene layer's**
+directory, including inherited base assets.
 
-| Class | Examples |
-|-------|----------|
-| block | blue_block, green_block, red_block, yellow_block, brick |
-| fruit | avocado01, lemon_01, lime01, orange_01, banana, apple |
-| vegetable | red_onion, garlic |
-| food | bagel, sesame_bagel, spam, chips_can, coffee_can |
-| container | bowl, grey_bin, crate, mug, plate, tray |
-| dishware | plate_\*, bowl_\* |
-| kitchenware | pot, pan, colander, cutting_board |
-| utensil | spoon, fork, knife, ladle, measuring_cups, salad_tongs |
-| cooking_utensil | spatula, whisk |
-| tool | hammer, screwdriver, wrench, pliers |
-| toy | rubiks_cube, toy_airplane, foam_brick |
-| bottle | soft_scrub |
-| condiment | bbq_sauce_bottle, mustard_bottle, mayo_bottle, ranch_dressing |
-| stationery | marker, pen, scissors |
-| electronics | remote_control, power_drill |
-| vase | vase_\* |
-| fixture | rack_l04, wireshelving_a01 (large — exclude from normal scenes) |
-
-## Important Notes
-
-- Object `name` must match exactly when used in scenes and tasks
-- `dims` are in meters — use these to compute placement spacing
-- `usd_path` is relative to the repo root
-- For scene USDA, the payload path must be relative to `assets/scenes/` (e.g., `@../objects/ycb/banana.usd@`)
+Refresh the catalog only when requested or required for the current task, using
+`assets/objects/_utils/generate_catalog.py` in an environment with its dependencies.
+Do not overwrite or globally rescale assets to solve a scene-specific layout issue.

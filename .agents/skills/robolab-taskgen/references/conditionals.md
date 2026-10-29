@@ -2,14 +2,17 @@
 
 All functions are imported from `robolab.core.task.conditionals`. They are used in termination `success` conditions and in subtask definitions.
 
+Signatures and semantics in `robolab/core/task/conditionals.py` are authoritative. Inspect the selected function before generating parameters. Starting-scene validation is a separate prerequisite; see [scene validation](../../robolab-scenegen/references/validation.md).
+
 ## Containment & Placement
 
 | Function | Use when | Key params |
 |----------|----------|------------|
+| `object_resting_in_container` | Released object resting with sustained bin support and stable poses; permits protrusion | `object`, `container`, `exclude_contact_with`, `settle_time_s`, velocity/pose thresholds |
 | `object_in_container` | Object placed inside an open-top container (bowl, bin, box) | `object`, `container`, `require_contact_with`, `require_gripper_detached` |
-| `object_on_top` | Object stably resting on a surface (plate, shelf, table) via contact force | `object`, `reference_object`, `require_gripper_detached` |
+| `object_on_top` | Object on a surface (plate, shelf, table) via geometry/contact; not a timed stability gate | `object`, `reference_object`, `require_gripper_detached` |
 | `object_enclosed` | Object's bounding box fully enclosed inside container | `object`, `container` |
-| `object_inside` | Object's centroid inside container's bounding box | `object`, `container` |
+| `object_inside` | Alias of open-top containment; inspect current hull/centroid semantics | `object`, `container` |
 | `object_outside_of` | Object removed from a container | `object`, `container` |
 | `object_outside_of_and_on_surface` | Object removed from container AND placed on surface | `object`, `container`, `surface` |
 
@@ -50,7 +53,11 @@ Spatial conditions support different frames of reference:
 
 | Function | Use when | Key params |
 |----------|----------|------------|
-| `stacked` | Objects stacked in order | `objects` (list), `order` (`"bottom_to_top"` or `None`) |
+| `stacked` | Objects stacked in order; compose release separately if required | `objects` (list), `order` (`"bottom_to_top"` or `None`) |
+
+`stacked` checks order/contact and does not independently reject every penetration
+or enforce release/stability. Compose the required checks and validate negative
+cases before treating it as a physically qualified stacking goal.
 
 ## Multi-Group
 
@@ -72,12 +79,12 @@ These expand into multi-step sequences. Use them in `subtasks`, **not** in termi
 
 | Function | Use when | Key params |
 |----------|----------|------------|
-| `pick_and_place` | Pick object(s) and place in container | `object`, `container`, `logical`, `score` |
+| `pick_and_place` | Pick object(s) and place in container | `object`, `container`, `logical`, `score`, `placement_func`, `placement_params` |
 | `pick_and_place_on_surface` | Pick object(s) and place on flat surface | `object`, `surface`, `logical`, `score` |
 
 ## Common Parameters
 
-Most atomic conditionals share these parameters:
+Many atomic conditionals use the parameters below; do not assume all accept them. In particular, `object_resting_in_container` already requires release and does not take `require_gripper_detached` or `require_contact_with`:
 
 - **`object`**: `str | list[str]` -- Object name(s) to check. Must be in `contact_object_list`.
 - **`logical`**: `"all" | "any" | "choose"` -- How to combine results when `object` is a list.
@@ -96,6 +103,7 @@ Most atomic conditionals share these parameters:
 
 | Task description | Termination function | Subtask function |
 |-----------------|---------------------|-----------------|
+| "Place X and leave it resting in Y" | `object_resting_in_container` | `pick_and_place` with matching `placement_func` and `placement_params` |
 | "Put X in Y" (bowl, bin, box) | `object_in_container` | `pick_and_place` |
 | "Put X on Y" (plate, shelf) | `object_on_top` | `pick_and_place_on_surface` |
 | "Stack X, Y, Z" | `stacked` | `Subtask` with `partial(stacked, ...)` |

@@ -1,10 +1,10 @@
 # Predicate Reference
 
-Predicates are constraints that define how objects should be placed in a scene. The solver resolves them into concrete (x, y, z, yaw) positions.
+Predicates are constraints that define how objects should be placed in a scene. Solvers propose (x, y, z, yaw) positions; verify complete outputs and the composed scene independently.
 
 ## Predicate JSON Format
 
-Each predicate is a dict with at least `type` and `object`:
+Most predicates use `type` and `object`; `place-in` uses an `objects` list and `container`:
 
 ```json
 {"type": "place-on-base", "object": "bowl", "x": 0.55, "y": 0.0}
@@ -98,7 +98,9 @@ These handle stacking and containment.
 
 1. **Parse**: `parse_predicates_from_dict()` converts JSON dicts into typed `Predicate` objects
 2. **Spatial solve**: `SpatialSolver.solve()` resolves 2D positions (x, y, yaw) from spatial predicates, with collision avoidance
-3. **Physical solve**: `PhysicalSolver.solve()` resolves 3D positions (z, stacking, containment) from physical predicates
-4. **Grammar check**: `FeedbackSystem.generate_grammar_feedback()` verifies all objects have complete placement info
+3. **Physical solve**: `PhysicalSolver.solve()` proposes stacking/containment poses from physical predicates; it does not fill Z for every `place-on-base` object
+4. **Grammar feedback**: `FeedbackSystem.generate_grammar_feedback()` checks spatial completeness but skips physical predicates; separately check every object has finite x/y/z and a valid orientation
 
-All modules are in `robolab/scene_gen/llm_scene_gen/` and require only `numpy` and `scipy` (no IsaacSim).
+These planning modules live in `robolab/scene_gen/llm_scene_gen/` and can run with numpy/scipy without IsaacSim. That mode is not a physics validation. Actual USD geometry inspection additionally requires `pxr`; dynamic qualification requires the simulator.
+
+Check success flags from both solver calls. Supply measured scaled asset dimensions, plus `local_bounds` metadata where supported. Account for root pivot offsets; the spatial solver assumes centered geometry. Compute table-only Z using actual transformed bottoms, preserve physically solved Z, and validate final requested relations and unintended intersections. Relative/alignment predicates should be checked against the final poses because collision resolution can move objects. Follow [validation.md](validation.md) before accepting a scene.
