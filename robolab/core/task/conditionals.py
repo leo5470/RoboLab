@@ -25,6 +25,7 @@ from robolab.core.task.predicate_logic import *
 from robolab.core.task.predicate_logic import _and, _not, gripper_detached
 from robolab.core.task.subtask import Subtask
 from robolab.core.world.world_state import get_world
+from robolab.core.omy_teleop.boundary import shared_placement_condition
 
 #########################################################
 # Composite conditions
@@ -382,6 +383,7 @@ def _condition_held_for_time(world, current, *, key, duration_s, positions, orie
 
 
 @atomic
+@shared_placement_condition(get_world)
 def object_resting_in_container(
     env,
     object: str | list[str],
@@ -473,6 +475,9 @@ def resting_in_container_diagnostics(env, params: dict, env_id: int = 0) -> dict
     """
     import inspect
 
+    snapshot = getattr(env, "_omy_task_snapshot", None)
+    if snapshot is not None and snapshot.current:
+        env = snapshot.world
     bound = inspect.signature(object_resting_in_container).bind(env, **params)
     bound.apply_defaults()
     p = bound.arguments

@@ -11,11 +11,17 @@ CONTRACT_OPTIONS = (
     "stepping_profile", "recording_profile", "episode_buffer_mb", "contact_sensors", "contact_history_length",
     "solver_position_iterations", "render_interval", "vel_scale", "gripper_open", "source", "baudrate",
     "gpu_max_num_partitions",
+    "placement_checks", "finger_colliders", "task_checks", "cuda_connections", "physics_workers", "cpu_workers",
     "read_hz", "stale_s", "ready_tolerance_rad", "start_motion_rad", "ready_stable_s", "reference_observations",
     "scene_settle_min_s", "scene_settle_stable_s", "scene_settle_timeout_s",
     "scene_settle_linear_m_s", "scene_settle_angular_rad_s",
 )
-LEGACY_CONTRACT_OPTIONS = tuple(name for name in CONTRACT_OPTIONS if name != "gpu_max_num_partitions")
+PRE_LATENCY_CONTRACT_OPTIONS = tuple(name for name in CONTRACT_OPTIONS if name not in (
+    "task_checks", "cuda_connections", "physics_workers", "cpu_workers"))
+PRE_OPTIMIZATION_CONTRACT_OPTIONS = tuple(
+    name for name in PRE_LATENCY_CONTRACT_OPTIONS if name not in ("placement_checks", "finger_colliders")
+)
+LEGACY_CONTRACT_OPTIONS = tuple(name for name in PRE_OPTIMIZATION_CONTRACT_OPTIONS if name != "gpu_max_num_partitions")
 
 
 def add_arguments(parser):
@@ -48,14 +54,19 @@ def run_contract(args):
             stack[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
             stack[package] = None
-    return {
-        "options": {name: getattr(args, name) for name in (
-            LEGACY_CONTRACT_OPTIONS if getattr(args, "_legacy_gpu_partition_contract", False) else CONTRACT_OPTIONS
-        )},
+    names = getattr(args, "_omy_contract_options", None) or (
+        LEGACY_CONTRACT_OPTIONS if getattr(args, "_legacy_gpu_partition_contract", False) else CONTRACT_OPTIONS
+    )
+    contract = {
+        "options": {name: getattr(args, name) for name in names},
         "calibration_sha256": hashlib.sha256(Path(args.calib).read_bytes()).hexdigest(),
         "stack": stack,
         "preparation": PreparationSettings.from_args(args).metadata(),
     }
+    if "finger_colliders" in names and args.finger_colliders == "hulls":
+        from .finger_colliders import finger_collider_identity
+        contract["finger_collider_reference"] = finger_collider_identity()
+    return contract
 
 
 def session_metadata(args):
@@ -73,6 +84,7 @@ def configure_selection(parser, args):
     args.layout_plan = None
     args.target_total_successes = None
     args._legacy_gpu_partition_contract = False
+    args._omy_contract_options = CONTRACT_OPTIONS
     group = args.object_name is not None or args.object_id is not None
     if args.resume is not None:
         from .layout_session import LayoutSession
@@ -83,24 +95,31 @@ def configure_selection(parser, args):
             parser.error("--resume uses its session directory; omit --output-dir")
         plan, quota, metadata, current = LayoutSession.inspect(args.resume)
         saved_options = metadata.get("options")
-        if not isinstance(saved_options, dict) or set(saved_options) not in (
-                set(CONTRACT_OPTIONS), set(LEGACY_CONTRACT_OPTIONS)):
+        recognized = (CONTRACT_OPTIONS, PRE_LATENCY_CONTRACT_OPTIONS,
+                      PRE_OPTIMIZATION_CONTRACT_OPTIONS, LEGACY_CONTRACT_OPTIONS)
+        if not isinstance(saved_options, dict) or set(saved_options) not in tuple(set(names) for names in recognized):
             raise ValueError("Saved session is missing its complete collection/preparation configuration; start a new session")
+        args._omy_contract_options = next(names for names in recognized if set(names) == set(saved_options))
         explicit = getattr(args, "_explicit_options", set())
-        if set(saved_options) == set(LEGACY_CONTRACT_OPTIONS):
-            # Older sessions ran with the inherited value 8. Preserve their
-            # exact on-disk contract while enforcing that same physics value.
-            args._legacy_gpu_partition_contract = True
-            if "--gpu-max-num-partitions" in explicit and args.gpu_max_num_partitions != 8:
-                parser.error("--gpu-max-num-partitions conflicts with the resumed session (8)")
-            args.gpu_max_num_partitions = 8
+        # Preserve older sessions' exact contract and effective behavior.
+        # New defaults apply only when creating a new session.
+        for name, value in {"gpu_max_num_partitions": 8, "placement_checks": "independent",
+                            "finger_colliders": "original", "task_checks": "native",
+                            "cuda_connections": 8, "physics_workers": 2, "cpu_workers": 8}.items():
+            if name not in saved_options:
+                flag = "--" + name.replace("_", "-")
+                if flag in explicit and getattr(args, name) != value:
+                    parser.error(f"{flag} conflicts with the resumed session ({value})")
+                setattr(args, name, value)
+        args._legacy_gpu_partition_contract = "gpu_max_num_partitions" not in saved_options
         for name, value in saved_options.items():
             flag = "--" + name.replace("_", "-")
             action = parser._option_string_actions[flag]
             if value is not None and action.choices is not None and value not in action.choices:
                 raise ValueError(f"Saved value for {flag} is invalid: {value!r}")
             expected = getattr(args, name)
-            if ((isinstance(expected, bool) and type(value) is not bool)
+            unset_optional = value is None and name in ("solver_position_iterations", "render_interval")
+            if not unset_optional and ((isinstance(expected, bool) and type(value) is not bool)
                     or (type(expected) is int and type(value) is not int)
                     or (action.type is int and value is not None and type(value) is not int)
                     or (type(expected) is float and (type(value) not in (int, float)))
@@ -157,11 +176,14 @@ def configure_selection(parser, args):
 
 def selection_report(args):
     plan = getattr(args, "layout_plan", None)
+    runtime = {name: getattr(args, name) for name in (
+        "physics_workers", "cpu_workers", "cuda_connections", "task_checks", "control_hz",
+        "stepping_profile", "recording_profile")}
     if plan is None:
         return {"mode": "task", "task": args.task, "target_successes": args.num_episodes,
-                "reset_key": args.reset_key}
+                "reset_key": args.reset_key, "runtime": runtime}
     return {"mode": "object", "object": plan.object_name, "catalog_index": plan.catalog_index,
             "layouts": len(plan.layouts), "episodes_per_layout": args.num_episodes,
             "target_total_successes": args.target_total_successes,
             "resume": str(args.resume) if args.resume else None,
-            "reset_key": args.reset_key, "next_layout_key": args.next_layout_key}
+            "reset_key": args.reset_key, "next_layout_key": args.next_layout_key, "runtime": runtime}

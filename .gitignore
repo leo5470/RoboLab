@@ -24,6 +24,11 @@ docker-cache/
 # Local tests
 /tests/*
 !/tests/test_resting_in_container.py
+!/tests/test_omy_collection_optimizations.py
+!/tests/test_omy_postprocess_videos.py
+!/tests/test_demo_library.py
+!/tests/test_scene_layout_validation.py
+!/tests/test_simple_pnp_audit.py
 
 # Documentation
 docs/superpowers/

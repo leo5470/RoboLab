@@ -107,7 +107,7 @@ class SubtaskCompletionRecorderTerm(RecorderTerm):
         all_events = self._event_tracker.check_events(
             env=self._env,
             per_env_intended=per_env_intended,
-            frozen_mask=effective_frozen,
+            frozen_mask=effective_frozen.to(self._event_tracker.device),
             verbose=robolab.constants.VERBOSE,
         )
 

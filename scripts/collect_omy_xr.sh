@@ -27,10 +27,20 @@ Run from the host desktop with SteamVR/ALVR running and the leader connected.
                     Physics backend (new runs: cuda:0; resume: stored).
                     CPU is an opt-in backend experiment and uses ordinary stepping.
   --solver-position-iterations N
-                    Physics solver cap: 16, 32, or 64 (new runs: 16; resume: stored).
+                    Physics solver cap: 16, 32, or 64 (new runs: 32; resume: stored).
   --gpu-max-num-partitions N
-                    GPU solver partition limit: 1, 2, 4, 8, 16, 32 (default: 8).
-                    Try 1 or 2 with 32 iterations for the single-robot candidate.
+                    GPU solver partition limit: 1, 2, 4, 8, 16, 32 (new runs: 2; resume: stored).
+  --placement-checks shared|independent
+                    Placement evaluation (new runs: shared; resume: stored).
+  --task-checks cpu|native
+                    Shared CPU task/event snapshot when supported (new runs: cpu; resume: stored).
+  --physics-workers N
+                    PhysX CPU workers (new runs: 0/main thread; resume: stored).
+  --cpu-workers N    Kit/TBB worker limit (new runs: 8; resume: stored).
+  --cuda-connections N
+                    CUDA driver connections, 1–32 (new runs: 1; resume: stored).
+  --finger-colliders original|hulls
+                    Finger collision geometry (default: original); hulls preserves reference mass properties.
   --stats-interval S
                     Seconds between periodic reports (default: 1; 0 disables the whole block).
   --log             Also save console output to a unique /tmp/omy_collect_fast_*.log.
@@ -92,11 +102,17 @@ num_episodes=10
 num_episodes_set=false
 episodes_per_layout=1
 episodes_per_layout_set=false
-solver_position_iterations=16
+solver_position_iterations=32
 solver_position_iterations_set=false
 physics_device="cuda:0"
 physics_device_set=false
 gpu_partitions=""
+placement_checks=""
+finger_colliders=""
+task_checks=""
+physics_workers=""
+cpu_workers=""
+cuda_connections=""
 stats_interval=1
 while (( $# )); do
   argument="$1"
@@ -164,6 +180,39 @@ while (( $# )); do
       case "${2:-}" in
         1|2|4|8|16|32) gpu_partitions="$2" ;;
         *) printf '%s\n' '--gpu-max-num-partitions requires 1, 2, 4, 8, 16, or 32.' >&2; exit 2 ;;
+      esac
+      shift
+      ;;
+    --placement-checks)
+      case "${2:-}" in
+        shared|independent) placement_checks="$2" ;;
+        *) printf '%s\n' '--placement-checks requires shared or independent.' >&2; exit 2 ;;
+      esac
+      shift
+      ;;
+    --task-checks)
+      case "${2:-}" in
+        cpu|native) task_checks="$2" ;;
+        *) printf '%s\n' '--task-checks requires cpu or native.' >&2; exit 2 ;;
+      esac
+      shift
+      ;;
+    --physics-workers|--cpu-workers|--cuda-connections)
+      if [[ ! "${2:-}" =~ ^[0-9]+$ ]]; then
+        printf '%s requires a nonnegative integer.\n' "$argument" >&2
+        exit 2
+      fi
+      case "$argument" in
+        --physics-workers) physics_workers="$2" ;;
+        --cpu-workers) cpu_workers="$2" ;;
+        --cuda-connections) cuda_connections="$2" ;;
+      esac
+      shift
+      ;;
+    --finger-colliders)
+      case "${2:-}" in
+        original|hulls) finger_colliders="$2" ;;
+        *) printf '%s\n' '--finger-colliders requires original or hulls.' >&2; exit 2 ;;
       esac
       shift
       ;;
@@ -267,6 +316,12 @@ else
 fi
 
 [[ -z "$gpu_partitions" ]] || profile_args+=(--gpu-max-num-partitions "$gpu_partitions")
+[[ -z "$placement_checks" ]] || profile_args+=(--placement-checks "$placement_checks")
+[[ -z "$finger_colliders" ]] || profile_args+=(--finger-colliders "$finger_colliders")
+[[ -z "$task_checks" ]] || profile_args+=(--task-checks "$task_checks")
+[[ -z "$physics_workers" ]] || profile_args+=(--physics-workers "$physics_workers")
+[[ -z "$cpu_workers" ]] || profile_args+=(--cpu-workers "$cpu_workers")
+[[ -z "$cuda_connections" ]] || profile_args+=(--cuda-connections "$cuda_connections")
 
 collector_command=(
   "$robolab_root/.venv/bin/python" -u "$robolab_root/examples/collect_omy_xr.py"
@@ -275,7 +330,6 @@ collector_command=(
   "${profile_args[@]}"
   "${preparation_args[@]}"
   --port /dev/robotis_left --render-gpu 0
-  --cpu-workers 8 --physics-workers 2
   --rendering_mode performance
   --xr-resolution-multiplier 0.8
   --stats-interval "$stats_interval"

@@ -154,6 +154,10 @@ def configure_performance(env_cfg, args):
     env_cfg.sim.render_interval = render_interval(args, env_cfg.decimation)
     env_cfg.omy_stepping_profile = getattr(args, "stepping_profile", "ordinary")
     env_cfg.omy_substep_diagnostics = args.diagnostics
+    env_cfg.omy_shared_placement_checks = getattr(args, "placement_checks", "independent") == "shared"
+    env_cfg.omy_task_checks = getattr(args, "task_checks", "native")
+    from .finger_colliders import configure_finger_colliders
+    configure_finger_colliders(env_cfg, getattr(args, "finger_colliders", "original"))
     if hasattr(args, "scene_settle_timeout_s"):
         from .preparation_runtime import configure_preparation
 

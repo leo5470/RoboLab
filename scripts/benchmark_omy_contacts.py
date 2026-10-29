@@ -76,6 +76,12 @@ def main():
     parser.add_argument("--placement-cache", action="store_true", help="Diagnostic shared placement evaluation at each control boundary")
     parser.add_argument("--placement-cache-ab", action="store_true",
                         help="Alternate baseline/cache across repeats in ABBA BAAB order within one simulator")
+    parser.add_argument("--placement-checks", choices=("independent", "shared"), default="independent",
+                        help="Production placement-check implementation")
+    parser.add_argument("--task-checks", choices=("native", "cpu"), default="native",
+                        help="Production task/event evaluation backend")
+    parser.add_argument("--production-finger-colliders", choices=("original", "hulls"), default="original",
+                        help="Exercise the collection's built-in collider/mass-reference path")
     parser.add_argument("--recompute-arm-inertia", action="store_true", help="Diagnostic collider-derived arm inertia/COM, keeping authored masses")
     parser.add_argument("--mass-properties-from", type=Path,
                         help="Restore robot and target masses, COMs and full inertias from a reference summary to isolate geometry")
@@ -148,6 +154,9 @@ def main():
         run_args = build_parser().parse_args([
             "--source", "tcp", "--control-hz", "15", "--record", "--save-failures",
             "--recording-profile", "compact",
+            "--placement-checks", args.placement_checks,
+            "--task-checks", args.task_checks,
+            "--finger-colliders", args.production_finger_colliders,
             "--gpu-max-num-partitions", str(args.gpu_partitions),
             "--stepping-profile", args.stepping_profile, "--render-interval", "4",
             "--episode-length-s", str(max(120, args.steps / 15 + 10)),
@@ -265,6 +274,10 @@ def main():
                    "source_metadata": metadata, "versions": {n: importlib.metadata.version(n) for n in ("isaaclab", "isaacsim", "torch")},
                    "physics_device": str(env.device), "physics_dt": env.physics_dt, "decimation": cfg.decimation,
                    "capabilities": cfg.omy_capabilities, "joint_names": names, "body_names": robot.body_names,
+                   "production_optimizations": {"placement_checks": args.placement_checks,
+                                                "task_checks_effective": cfg.omy_task_checks_effective,
+                                                "task_checks_fallback_reasons": cfg.omy_task_checks_fallback_reasons,
+                                                "finger_colliders": cfg.omy_finger_collider_metadata},
                    "gripper": {"speed": robot.data.joint_vel_limits[0, finger].item(),
                                "stiffness": robot.data.joint_stiffness[0, finger].item(),
                                "damping": robot.data.joint_damping[0, finger].item(),

@@ -94,6 +94,14 @@ default. In object mode, `--num-episodes` limits total successes;
 `--episodes-per-layout` controls successes per layout. Omit `--num-episodes` to
 collect every retained layout.
 
+New collection sessions use 32 physics position iterations, two GPU solver
+partitions, zero PhysX CPU workers, one CUDA connection and shared CPU task
+snapshots when supported. Unsupported task queries retain the native path with
+reported reasons. Commands retain their 15 Hz simulation cadence.
+`--finger-colliders hulls` opts into
+simpler finger colliders with preserved mass properties; original colliders
+remain the default. Resuming a session restores its recorded profile.
+
 New sessions settle the scene before READY and record the settled initial state.
 F9 confirms READY or retries an attempt; F12 skips a layout. After the success
 quota or graceful Ctrl+C, the launcher validates and packages the recordings,

@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "asset": "assets/robots/franka_robotiq_2f_85_flattened.usd",
+  "asset_sha256": "f555695465687548a1bd31b5e3f30385182d476a67c17080b7820ad0ef747e41",
+  "stack": {
+    "isaaclab": "2.2.0",
+    "isaacsim": "5.0.0.0"
+  },
+  "description": "Original cooked body properties of the existing OMY robot. Preserve these when changing finger collider approximations; this is a behavioral reference, not a physical calibration.",
+  "source": "20261024_cuda_optimizations/baseline_after, original collider profile, CUDA",
+  "bodies": {
+    "left_inner_finger": {
+      "masses": 0.009513214230537415,
+      "coms": [
+        0.10735908895730972,
+        0.05674953758716583,
+        6.97562427376397e-05,
+        -0.01247743982821703,
+        -0.0027755144983530045,
+        -0.2446671724319458,
+        0.9695228934288025
+      ],
+      "inertias": [
+        9.447733191336738e-07,
+        5.116979764352436e-07,
+        -1.2361139667405041e-08,
+        5.116979764352436e-07,
+        1.6186228322112584e-06,
+        7.76349295961154e-09,
+        -1.236114144376188e-08,
+        7.763489406897861e-09,
+        1.936653688972001e-06
+      ]
+    },
+    "right_inner_finger": {
+      "masses": 0.009513214230537415,
+      "coms": [
+        0.10735911130905151,
+        -0.05674953758716583,
+        -6.97561408742331e-05,
+        -0.012477356940507889,
+        0.0027755338232964277,
+        0.24466708302497864,
+        0.9695229530334473
+      ],
+      "inertias": [
+        9.447733191336738e-07,
+        -5.116980901220813e-07,
+        1.2361147661010818e-08,
+        -5.116980332786625e-07,
+        1.618623400645447e-06,
+        7.763503617752576e-09,
+        1.2361147661010818e-08,
+        7.763496512325219e-09,
+        1.936654825840378e-06
+      ]
+    }
+  }
+}

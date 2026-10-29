@@ -21,6 +21,9 @@ class OmyEnv(RobolabEnv):
     def __init__(self, cfg, **kwargs):
         cfg.omy_account_early_terminations = True
         super().__init__(cfg, **kwargs)
+        if getattr(cfg, "omy_finger_colliders", "original") == "hulls":
+            from .finger_colliders import restore_finger_mass_properties
+            restore_finger_mass_properties(self)
         self._omy_plan = execution_plan(self)
         features = self._omy_plan["features"]
         self._omy_compact_step = features["compact_observations"]
@@ -31,7 +34,14 @@ class OmyEnv(RobolabEnv):
         # consumers keep ordinary queries, even if target holding is safe.
         # All command/reset paths below invalidate this instance-local cache.
         cfg.omy_batch_contacts_enabled = self._omy_query_cache
+        from .task_snapshot import configure_task_snapshot
+
+        self._omy_task_snapshot = configure_task_snapshot(self)
+        self._omy_plan["features"]["cpu_task_checks"] = self._omy_task_snapshot is not None
+        self._omy_plan["fallback_reasons"]["cpu_task_checks"] = cfg.omy_task_checks_fallback_reasons
         self._publish_omy_plan()
+        if cfg.omy_task_checks_fallback_reasons:
+            logger.warning("OMY CPU task snapshot fallback: %s", "; ".join(cfg.omy_task_checks_fallback_reasons))
         cfg.omy_skip_duplicate_observations = self._omy_compact_step
         if getattr(cfg, "omy_stepping_profile", "ordinary") == "held-target":
             for feature in ("held_targets", "boundary_scene_updates"):
@@ -72,7 +82,8 @@ class OmyEnv(RobolabEnv):
         advance_physics(self, held_target=self._omy_held_target, boundary_updates=self._omy_boundary_updates)
         self.episode_length_buf += 1
         self.common_step_counter += 1
-        with boundary_queries(world) if self._omy_query_cache else nullcontext():
+        with (boundary_queries(world) if self._omy_query_cache else nullcontext(),
+              self._omy_task_snapshot.boundary() if self._omy_task_snapshot is not None else nullcontext()):
             self.reset_buf = self.termination_manager.compute()
             self.reset_terminated = self.termination_manager.terminated
             self.reset_time_outs = self.termination_manager.time_outs
@@ -106,6 +117,9 @@ class OmyEnv(RobolabEnv):
     def invalidate_omy_state(self):
         """Invalidate state-dependent caches even when restoring at the same step."""
         world = get_world(self)
+        snapshot = getattr(self, "_omy_task_snapshot", None)
+        if snapshot is not None:
+            snapshot.invalidate()
         world.clear_contact_cache()
         world.reset_predicate_state(torch.arange(self.num_envs, device=self.device))
         self.scene.update(dt=0.0)

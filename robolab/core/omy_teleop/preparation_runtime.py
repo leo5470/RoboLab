@@ -6,7 +6,7 @@ import torch
 
 from .options import ARM_JOINTS
 from .preparation import PreparationSettings, StabilityGate, supported_root_height
-from robolab.core.scenes.placement import bounds_corners
+from robolab.core.scenes.placement import bounds_corners, flat_layout_issues, tilt_change_deg
 
 
 def configure_preparation(cfg, args):
@@ -32,6 +32,8 @@ class ScenePreparation:
         self.elapsed_s = 0.0
         self.world = get_world(env)
         self.placement = []
+        self.geometry = {}
+        self.initial_orientations = {}
         self.action = torch.tensor([[*[env.cfg.scene.robot.init_state.joint_pos[n] for n in ARM_JOINTS], 1.0]],
                                    device=env.device)
         self.names = list(env.scene.rigid_objects)
@@ -50,15 +52,24 @@ class ScenePreparation:
         # ComputeUntransformedBound excludes this prim's pose and scale while
         # retaining descendant transforms. ComputeLocalBound includes the root
         # transform and must not be combined with a second PhysX root pose.
-        prim = self.world._get_prim(name, env_id=0)
-        cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render])
-        bounds = cache.ComputeUntransformedBound(prim).ComputeAlignedRange()
-        if bounds.IsEmpty():
-            raise ValueError(f"Cannot prepare {name}: missing geometry bounds")
-        transform = UsdGeom.Xformable(prim).GetLocalTransformation()
-        scale = Gf.Transform(transform).GetScale()
+        if name not in self.geometry:
+            prim = self.world._get_prim(name, env_id=0)
+            cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(),
+                                     [UsdGeom.Tokens.default_, UsdGeom.Tokens.render, UsdGeom.Tokens.proxy])
+            bounds = cache.ComputeUntransformedBound(prim).ComputeAlignedRange()
+            if bounds.IsEmpty():
+                raise ValueError(f"Cannot prepare {name}: missing geometry bounds")
+            transform = UsdGeom.Xformable(prim).GetLocalTransformation()
+            self.geometry[name] = (list(bounds.GetMin()), list(bounds.GetMax()),
+                                   list(Gf.Transform(transform).GetScale()))
+        lower, upper, scale = self.geometry[name]
         pose = self.env.scene.rigid_objects[name].data.root_pose_w[0].detach().cpu().numpy()
-        return bounds_corners(bounds.GetMin(), bounds.GetMax(), pose, scale)
+        return bounds_corners(lower, upper, pose, scale)
+
+    def _layout_issues(self, objects, table):
+        return flat_layout_issues(objects, table,
+                                  pair_clearance=self.settings.pair_clearance_m,
+                                  edge_clearance=self.settings.edge_clearance_m)
 
     def _correct_placement(self):
         env = self.env
@@ -69,15 +80,18 @@ class ScenePreparation:
         self.world.clear_contact_cache()
         table = self._bounds("table")
         surface_z = float(table[:, 2].max())
-        lo, hi = table[:, :2].min(axis=0), table[:, :2].max(axis=0)
+        objects = {name: self._bounds(name) for name in self.names if name != "table"}
+        # Preflight the entire layout before any teleport or physics step. Height
+        # correction alone can lower an object into an overlapping bin wall.
+        issues = self._layout_issues(objects, table)
+        if issues:
+            raise ValueError("Cannot prepare layout: " + "; ".join(issues))
         for name, asset in env.scene.rigid_objects.items():
             if name == "table":
                 continue
-            corners = self._bounds(name)
-            center = corners.mean(axis=0)
-            if not bool(((center[:2] >= lo) & (center[:2] <= hi)).all()):
-                raise ValueError(f"Cannot prepare {name}: authored placement is outside the table")
+            corners = objects[name]
             pose = asset.data.root_pose_w.clone()
+            self.initial_orientations[name] = pose[0, 3:].detach().cpu().numpy().copy()
             before = pose[0, 2].item()
             pose[0, 2] = supported_root_height(before, float(corners[:, 2].min()),
                                                 surface_z,
@@ -119,6 +133,19 @@ class ScenePreparation:
                             "velocity": asset.data.root_vel_w[0].detach().cpu().numpy(),
                             "supported": supported}
         report = self.gate.observe(self.elapsed_s, bodies)
+        if self.flat_table:
+            objects = {name: self._bounds(name) for name in self.names if name != "table"}
+            issues = self._layout_issues(objects, self._bounds("table"))
+            for name, initial in self.initial_orientations.items():
+                tilt = tilt_change_deg(initial, bodies[name]["pose"][3:])
+                report["bodies"][name]["tilt_change_deg"] = tilt
+                if tilt > self.settings.max_tilt_change_deg:
+                    issues.append(f"{name}: tipped {tilt:.1f} degrees during preparation")
+            if issues:
+                # Reject even if the object eventually rests on its side. Do not
+                # let another stable interval erase evidence of a bad setup.
+                self.setup_error = "; ".join(issues)
+                report.update(status="failed", reasons=report["reasons"] + issues)
         report.update(settings=self.settings.metadata(), placement=self.placement)
         if report["status"] == "ready":
             # Clear caches/timers and capture the prepared boundary, without a

@@ -13,6 +13,31 @@ from contextlib import contextmanager
 from functools import wraps
 
 
+@contextmanager
+def collection_cuda_environment(args):
+    """Select collection scheduling before importing CUDA/Kit; restore on exit."""
+    overrides = {
+        "CUDA_DEVICE_MAX_CONNECTIONS": str(args.cuda_connections),
+        "CUDA_DEVICE_MAX_COPY_CONNECTIONS": None,
+        "CUDA_SCALE_LAUNCH_QUEUES": None,
+    }
+    previous = {name: os.environ.get(name) for name in overrides}
+    try:
+        for name, value in overrides.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        args.omy_cuda_environment = overrides.copy()
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def prepare_launcher(args):
     """Apply the opt-in profile before AppLauncher starts Kit.
 
@@ -195,6 +220,9 @@ class PerformanceMonitor:
             (env.recorder_manager, "record_post_step", "recording"),
         ):
             self.wrap(obj, method, region)
+        snapshot = getattr(env, "_omy_task_snapshot", None)
+        if snapshot is not None:
+            self.wrap(snapshot, "capture", "task_checks")
 
     def close(self):
         for obj, method, had_local, local, wrapper in reversed(self._wrappers):

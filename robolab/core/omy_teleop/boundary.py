@@ -49,6 +49,69 @@ def boundary_cached(func=None, *, batched=False):
     return query
 
 
+def single_env_condition_cache(func, get_world, *, enabled, stats=None):
+    """Share an audited condition within one existing OMY boundary.
+
+    Canonicalize single-env scalar consumers to the batched evaluator. Every
+    parameter participates in the key; the boundary/reset lifecycle owns
+    invalidation. The caller must audit stateful conditions before using this.
+    """
+    signature = inspect.signature(func)
+
+    def count(name):
+        if stats is not None:
+            stats[name] += 1
+
+    @wraps(func)
+    def cached(env, *args, **kwargs):
+        if not enabled(env):
+            count("fallback")
+            return func(env, *args, **kwargs)
+        world = get_world(env)
+        cache = getattr(world, "_boundary_query_cache", None)
+        if cache is None or env.num_envs != 1:
+            count("fallback")
+            return func(env, *args, **kwargs)
+        bound = signature.bind(env, *args, **kwargs)
+        bound.apply_defaults()
+        env_id = bound.arguments["env_id"]
+        if env_id is not None and (type(env_id) is not int or env_id != 0):
+            count("fallback")
+            return func(env, *args, **kwargs)
+        bound.arguments["env_id"] = None
+        values = {name: value for name, value in bound.arguments.items() if name != "env"}
+        for name in ("object", "gripper_name", "exclude_contact_with"):
+            if name in values:
+                value = values[name]
+                values[name] = (value,) if isinstance(value, str) else tuple(value or ())
+        try:
+            key = ("placement_result", func, _key(values))
+        except TypeError:
+            count("fallback")
+            return func(env, *args, **kwargs)
+        if key not in cache:
+            cache[key] = func(*bound.args, **bound.kwargs).clone()
+            count("computed")
+        else:
+            count("reused")
+        result = cache[key]
+        if env_id is not None:
+            return bool(result[0])
+        # Managers retain their simulator device; only the audited query and
+        # timer evaluation may use an instance-owned CPU world.
+        return result.to(getattr(env, "device", result.device), copy=True)
+
+    return cached
+
+
+def shared_placement_condition(get_world):
+    """Opt in only the placement condition audited against its settling timer."""
+    return lambda func: single_env_condition_cache(
+        func, get_world,
+        enabled=lambda env: getattr(getattr(env, "cfg", None), "omy_shared_placement_checks", False),
+    )
+
+
 @contextmanager
 def boundary_queries(world):
     """Share geometry/pose inputs, keeping predicate parameters and transitions distinct."""

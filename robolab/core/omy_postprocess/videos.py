@@ -47,6 +47,9 @@ def export_success_videos(dataset, output=None):
         for filename, expected in index["artifact_sha256"].items():
             if Path(filename).name != filename or sha256_file(output / filename) != expected:
                 raise ValueError(f"Verification video artifact changed: {filename}")
+        if index.get("video_retention") == "combined_only":
+            raise FileExistsError("Existing preview contains only the combined video; choose a new output "
+                                  "to regenerate separate clips from the camera cache")
         print(f"Verification videos: {output}", flush=True)
         return output
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -129,10 +132,19 @@ def export_success_videos(dataset, output=None):
     overview.save(temporary / "final_frames.jpg", quality=94)
     (temporary / "README.md").write_text("# Verification videos\n\nOpen all_successes.mp4 or an individual success clip. "
         "Left: shoulder camera; right: wrist camera. One frame per recorded step at 15 FPS. "
-        "Success labels come from collection metadata. Clips end at the final recorded frame.\n")
+        "Success labels come from collection metadata. Clips end at the final recorded frame. "
+        "Individual videos are retained alongside the combined video. "
+        "Episode frame ranges and start times in the combined video are recorded in index.json.\n")
     if sha256_file(dataset) != source_sha:
         raise RuntimeError("Dataset changed during verification encoding")
-    write_json(temporary / "index.json", {"schema_version": 1, "source_dataset_sha256": source_sha,
+    start_frame = 0
+    for clip in clips:
+        clip.update(combined_video=reel.name, start_frame=start_frame, start_time_s=start_frame / 15,
+                    end_frame_exclusive=start_frame + clip["frame_count"])
+        start_frame += clip["frame_count"]
+    (temporary / "concat.txt").unlink()
+    write_json(temporary / "index.json", {"schema_version": 3, "source_dataset_sha256": source_sha,
+        "video_retention": "combined_and_individual",
         "fps": 15, "clips": clips, "combined_stream": reel_stream,
         "artifact_sha256": {f.name: sha256_file(f) for f in temporary.iterdir() if f.is_file()}})
     publish_directory(temporary, output)

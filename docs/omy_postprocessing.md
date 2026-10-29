@@ -102,15 +102,20 @@ The launcher equivalents are `--postprocess-skip-failed` and
 ```text
 verification_videos/
   all_successes.mp4           # combined native-15 reel
-  success_*.mp4               # shoulder / wrist side by side
+  success_*.mp4              # separate video for each successful episode
   success_*_frames.jpg        # first / middle / last from each camera
   final_frames.jpg
   index.json                 # decoded counts, timing and artifact checksums
 ```
 
 Labels use the recorded outcome and clips end at the final recorded frame.
+New previews retain both the combined MP4 and separate episode videos, verified
+for frame count and timing. `index.json` links each individual video and records
+its frame range and start time within the combined video.
 Diagnostic fixtures are explicitly labeled. Existing matching preview outputs
-are checksum-verified and reused. Generate videos separately without Isaac:
+are checksum-verified and reused. Older combined-only previews require a new
+output directory to regenerate individual clips from cached images.
+Generate videos separately without Isaac:
 
 ```bash
 .venv/bin/python -B scripts/preview_omy_session.py --dataset SESSION/postprocess/RUN_ID

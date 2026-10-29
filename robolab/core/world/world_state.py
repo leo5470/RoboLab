@@ -80,6 +80,9 @@ def get_world(env: ManagerBasedRLEnv=None):
     """
     Get or create the global WorldState singleton.
 
+    An audited OMY task boundary can supply its instance-owned CPU snapshot.
+    Outside that boundary, queries retain the native world and device.
+
     Args:
         env: The ManagerBasedRLEnv instance (or an existing WorldState to pass through)
 
@@ -90,6 +93,10 @@ def get_world(env: ManagerBasedRLEnv=None):
 
     if isinstance(env, WorldState):
         return env
+
+    snapshot = getattr(env, "_omy_task_snapshot", None)
+    if snapshot is not None and snapshot.active:
+        return snapshot.world
 
     if _global_world is None or _global_world.env != env:
         _global_world = WorldState(env)

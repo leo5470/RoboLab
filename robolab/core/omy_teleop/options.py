@@ -70,6 +70,13 @@ def build_parser(app_launcher=None, *, include_video=True, include_performance_p
                         help="OMY scene position-iteration cap; 64 permits the robot's full iteration request.")
     parser.add_argument("--gpu-max-num-partitions", type=int, choices=(1, 2, 4, 8, 16, 32), default=8,
                         help="GPU solver partition limit (default: 8); 1 is a single-robot performance candidate.")
+    parser.add_argument("--placement-checks", choices=("independent", "shared"), default="independent",
+                        help="Share identical single-env placement checks within an audited control boundary.")
+    parser.add_argument("--task-checks", choices=("native", "cpu"), default="native",
+                        help="cpu: share a CPU snapshot for audited single-env placement, event and subtask checks; "
+                             "unsupported configurations retain native queries and report why.")
+    parser.add_argument("--finger-colliders", choices=("original", "hulls"), default="original",
+                        help="hulls: opt-in finger hulls with versioned original mass properties; CUDA only.")
     parser.add_argument("--stepping-profile", choices=("ordinary", "held-target"), default="ordinary",
                         help="held-target: audited native-15 CUDA stepping; logs a reason when falling back.")
     parser.add_argument("--recording-profile", choices=("full", "compact"), default="full",
@@ -116,6 +123,8 @@ def validate_args(parser, args):
         parser.error(f"Calibration not found: {args.calib}")
     if args.contact_history_length < 0:
         parser.error("--contact-history-length must be nonnegative")
+    if args.finger_colliders == "hulls" and not str(getattr(args, "device", "cuda:0")).startswith("cuda"):
+        parser.error("--finger-colliders hulls requires CUDA physics")
     if not math.isfinite(args.episode_buffer_mb) or args.episode_buffer_mb <= 0:
         parser.error("--episode-buffer-mb must be finite and positive")
     if args.stepping_profile == "held-target" and args.control_hz != 15:

@@ -19,12 +19,17 @@ class PreparationSettings:
     rotation_deg: float = 0.5
     clearance_m: float = 0.002
     support_force_n: float = 0.001
+    pair_clearance_m: float = 0.02
+    edge_clearance_m: float = 0.01
+    max_tilt_change_deg: float = 15.0
 
     def __post_init__(self):
         if any(not math.isfinite(v) or v <= 0 for v in asdict(self).values()):
             raise ValueError("Scene preparation settings must be finite and positive")
         if self.timeout_s < max(self.min_s, self.stable_s):
             raise ValueError("Scene settling timeout must cover minimum and stable durations")
+        if self.max_tilt_change_deg > 180:
+            raise ValueError("Tilt change must be at most 180 degrees")
 
     @classmethod
     def from_args(cls, args):
@@ -32,7 +37,8 @@ class PreparationSettings:
                       for field, default in asdict(cls()).items()})
 
     def metadata(self):
-        return {"schema_version": 1, "placement": "transformed_bounds", **asdict(self)}
+        return {"schema_version": 2, "placement": "transformed_bounds",
+                "flat_layout_validation": "footprint_clearance_and_tilt", **asdict(self)}
 
 
 def add_arguments(parser):

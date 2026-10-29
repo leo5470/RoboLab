@@ -61,6 +61,22 @@ class EventTracker:
         self.workspace_half_size = torch.tensor(workspace_size, device=self.device) / 2.0
         self.reset()
 
+    def to(self, device):
+        """Move persistent event state without resetting transition history."""
+        device = torch.device(device)
+
+        def move(value):
+            if isinstance(value, torch.Tensor):
+                return value.to(device)
+            if isinstance(value, dict):
+                return {key: move(item) for key, item in value.items()}
+            return value
+
+        for name, value in vars(self).copy().items():
+            setattr(self, name, move(value))
+        self.device = device
+        return self
+
     def reset(self) -> None:
         """Reset all event trackers to initial state for all envs."""
         N, dev = self.num_envs, self.device

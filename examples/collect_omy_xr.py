@@ -6,9 +6,11 @@ import os
 import signal
 import sys
 import traceback
+from contextlib import ExitStack
 
 from robolab.core.omy_teleop.collection import build_parser, validate_args
 from robolab.core.omy_teleop.collection_options import selection_report
+from robolab.core.omy_teleop.performance import collection_cuda_environment
 from robolab.core.omy_teleop.xr import XRControlSession, launcher_options, preflight
 
 
@@ -38,7 +40,9 @@ def main():
     collection_closed = False
     app_closed = False
     previous_sigint = signal.getsignal(signal.SIGINT)
+    environment = ExitStack()
     try:
+        environment.enter_context(collection_cuda_environment(args))
         import cv2  # noqa: F401 -- must precede Isaac Lab
         from isaaclab.app import AppLauncher
 
@@ -78,6 +82,7 @@ def main():
                 traceback.print_exc()
                 status = 1
         signal.signal(signal.SIGINT, previous_sigint)
+        environment.close()
         if handoff is not None:
             handoff.publish(status=status, cleanup_complete=(collection_closed and app_closed
                                                             and status in (0, 130)))

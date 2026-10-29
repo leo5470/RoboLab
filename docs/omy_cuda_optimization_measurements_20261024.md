@@ -1,5 +1,9 @@
 # CUDA-only measurements: shared task checks and collision/model optimization
 
+The [implementation follow-up](omy_collection_optimization_implementation_20261024.md)
+documents the subsequently enabled collection defaults and optional collider profile.
+The measurements below describe the experiments before that implementation.
+
 ## Scope and result
 
 At the user's request, this follow-up measures **only (1) shared task-condition evaluation and (2) collision geometry / robot-model changes**. Physics stays on **CUDA**, TGS, 120 Hz, 32 position iterations, two GPU solver partitions and two physics workers. No CPU physics, worker tuning, XR changes, source-asset edits or production-default changes were made.

@@ -23,6 +23,8 @@ GRASP_SIGNAL = "grasp"
 LOCKED_JOINT = "panda_joint3"
 MAX_JOINT_STEP = 0.5
 
+from .mimic_sources import STRATEGIES, checksum, source_references, source_record, trajectory_rng
+
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Expand OMY teleoperation demonstrations with MimicGen.")
@@ -30,6 +32,15 @@ def build_parser():
                         help="Teleoperation run directories (omy_demos.hdf5 with env_cfg.json).")
     parser.add_argument("--episodes", type=int, nargs="+",
                         help="Source episodes to use, as demo_<N> indices of a single --input; default: all successful.")
+    parser.add_argument("--source-selection", help="JSON sources list with exact file/episode references and optional sha256")
+    parser.add_argument("--target-input", help="Recording directory that defines the target scene independently of the source pool")
+    parser.add_argument("--target-episode", type=int, help="Successful target recording episode used as the reset anchor")
+    parser.add_argument("--selection-strategy", choices=STRATEGIES, default="random")
+    parser.add_argument("--nn-k", type=int, default=3, help="Choose among this many nearest sources (clamped to pool size)")
+    parser.add_argument("--selection-seed", type=int, default=0, help="Independent trajectory/source-selection seed")
+    parser.add_argument("--fixed-source-index", type=int, help="Force one pool source for qualification or a single-source baseline")
+    parser.add_argument("--trial-manifest", help="JSON trials list with fixed ids and scene seeds for paired comparisons")
+    parser.add_argument("--follow-source-schedule", action="store_true", help="Use each trial's predetermined source_index as the baseline")
     parser.add_argument("--output-dir", help="New run directory; an existing nonempty directory is refused.")
     parser.add_argument("--num-demos", type=int, default=40, help="Successful demonstrations to generate.")
     parser.add_argument("--max-attempts", type=int, default=200)
@@ -53,6 +64,11 @@ def build_parser():
     parser.add_argument("--keep-failed", action="store_true", help="Also export failed attempts.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--worker-exit", action="store_true",
+                        help="Exit the dedicated headless worker after closing recordings and the environment; "
+                             "avoids Isaac Sim 5.0 plugin-teardown crashes.")
+    from .preparation import add_arguments
+    add_arguments(parser)
     return parser
 
 
@@ -66,9 +82,15 @@ def validate_args(parser, args):
     if min(args.pose_range, args.yaw_range, args.object_pose_range, args.object_yaw_range,
            args.action_noise, args.settle_s) < 0 or args.interpolation_s <= 0:
         parser.error("ranges, noise, and --settle-s must be nonnegative; --interpolation-s must be positive")
+    if args.nn_k < 1 or (args.fixed_source_index is not None and args.fixed_source_index < 0):
+        parser.error("--nn-k must be positive and source index nonnegative")
+    if args.follow_source_schedule and not args.trial_manifest:
+        parser.error("--follow-source-schedule requires --trial-manifest")
+    if args.source_selection and args.episodes is not None:
+        parser.error("Use either --source-selection or --episodes")
     if args.episodes and len(args.input) != 1:
         parser.error("--episodes selects from a single --input run")
-    for run in args.input:
+    for run in [*args.input, *([args.target_input] if args.target_input else [])]:
         for name in ("omy_demos.hdf5", "env_cfg.json"):
             if not (Path(run) / name).is_file():
                 parser.error(f"{run} has no {name}")
@@ -228,7 +250,10 @@ def mimic_cfg(cfg, object_name, container_name, args):
         generation_keep_failed=args.keep_failed, generation_select_src_per_subtask=False,
         generation_transform_first_robot_pose=False, generation_interpolate_from_last_target_pose=True,
     )
-    common = dict(selection_strategy="random", action_noise=args.action_noise, num_fixed_steps=0,
+    common = dict(selection_strategy=args.selection_strategy,
+                  selection_strategy_kwargs=({"nn_k": min(args.nn_k, args.source_pool_size)}
+                                             if args.selection_strategy != "random" else {}),
+                  action_noise=args.action_noise, num_fixed_steps=0,
                   num_interpolation_steps=max(1, round(args.interpolation_s / (cfg.sim.dt * cfg.decimation))))
     cfg.subtask_configs = {EEF: [
         SubTaskConfig(object_ref=object_name, subtask_term_signal=GRASP_SIGNAL,
@@ -239,7 +264,14 @@ def mimic_cfg(cfg, object_name, container_name, args):
     cfg.task_constraint_configs = []
 
 
-def load_sources(env, pool, runs, object_name, container_name, episodes=None):
+def pose_recorder_cfg():
+    """Achieved pre-action poses for comparison of generated motion paths."""
+    from isaaclab.managers import RecorderTermCfg
+    from .recording import MimicPoseRecorder
+    return RecorderTermCfg(class_type=MimicPoseRecorder)
+
+
+def load_sources(env, pool, references, object_name, container_name):
     """Add the successful recorded episodes, or only ``episodes``, to the pool; return their provenance."""
     import asyncio
 
@@ -257,39 +289,33 @@ def load_sources(env, pool, runs, object_name, container_name, episodes=None):
     arm_ids = env.scene["robot"].find_joints(list(ARM_JOINTS), preserve_order=True)[0]
     locked = ARM_JOINTS.index(LOCKED_JOINT)
     home = env.scene["robot"].data.default_joint_pos[0, arm_ids[locked]].item()
-    wanted = None if episodes is None else {f"demo_{index}" for index in episodes}
     sources = []
-    for run in runs:
-        path = str(Path(run) / "omy_demos.hdf5")
-        for name in episode_names(path):
-            if wanted is not None and name not in wanted:
-                continue
-            with h5py.File(path, "r") as file:
-                group = file["data"][name]
-                if not group.attrs.get("success", False):
-                    continue
-                tree = read_group_tree(group)
-            arrays = source_arrays(tree, object_name, container_name)
-            actions, joints = arrays["actions"], arrays["joint_position"]
-            if not np.allclose(actions[:, locked], home, atol=1e-4):
-                raise ValueError(f"{path}:{name} commands {LOCKED_JOINT}; six-axis IK cannot reproduce it")
-            commanded = joints.copy()
-            commanded[:, arm_ids] = actions[:, :len(ARM_JOINTS)]
-            signal = torch.arange(len(actions), device=env.device) >= arrays["grasp"]
-            episode = EpisodeData()
-            episode.data = {
-                "actions": torch.as_tensor(actions, device=env.device),
-                "obs": {"datagen_info": {
-                    "eef_pose": {EEF: env.fk(joints)},
-                    "target_eef_pose": {EEF: env.fk(commanded)},
-                    "object_pose": {key: poses(value) for key, value in arrays["object_pose"].items()},
-                    "subtask_term_signals": {GRASP_SIGNAL: signal},
-                }},
-            }
-            asyncio.run(pool.add_episode(episode))
-            sources.append({"file": path, "episode": name, "steps": len(actions), "grasp": arrays["grasp"]})
-    if wanted is not None and (missing := wanted - {source["episode"] for source in sources}):
-        raise ValueError(f"--episodes selects missing or unsuccessful episodes: {sorted(missing)}")
+    for reference in references:
+        path, name = reference["file"], reference["episode"]
+        with h5py.File(path, "r") as file:
+            group = file["data"][name]
+            if not group.attrs.get("success", False):
+                raise ValueError(f"Source changed or unsuccessful: {path}:{name}")
+            tree = read_group_tree(group)
+        arrays = source_arrays(tree, object_name, container_name)
+        actions, joints = arrays["actions"], arrays["joint_position"]
+        if not np.allclose(actions[:, locked], home, atol=1e-4):
+            raise ValueError(f"{path}:{name} commands {LOCKED_JOINT}; six-axis IK cannot reproduce it")
+        commanded = joints.copy()
+        commanded[:, arm_ids] = actions[:, :len(ARM_JOINTS)]
+        signal = torch.arange(len(actions), device=env.device) >= arrays["grasp"]
+        episode = EpisodeData()
+        episode.data = {
+            "actions": torch.as_tensor(actions, device=env.device),
+            "obs": {"datagen_info": {
+                "eef_pose": {EEF: env.fk(joints)},
+                "target_eef_pose": {EEF: env.fk(commanded)},
+                "object_pose": {key: poses(value) for key, value in arrays["object_pose"].items()},
+                "subtask_term_signals": {GRASP_SIGNAL: signal},
+            }},
+        }
+        asyncio.run(pool.add_episode(episode))
+        sources.append({**reference, "file": path, "episode": name, "steps": len(actions), "grasp": arrays["grasp"]})
     if not sources:
         raise ValueError("no successful source demonstrations were found")
     return sources
@@ -317,24 +343,57 @@ def run(args):
 
     @torch.inference_mode()
     def generate():
-        first = Path(args.input[0])
+        references = source_references(args)
+        args.source_pool_size = len(references)
+        if args.fixed_source_index is not None and args.fixed_source_index >= len(references):
+            raise ValueError("Fixed source index exceeds pool size")
+        trials = json.loads(Path(args.trial_manifest).read_text())["trials"] if args.trial_manifest else None
+        if trials is not None and len(trials) != args.max_attempts:
+            raise ValueError("Trial manifest must contain exactly --max-attempts trials")
+        first = Path(args.target_input or args.input[0]).resolve()
         recorded = json.loads((first / "env_cfg.json").read_text())
         with h5py.File(first / "omy_demos.hdf5", "r") as file:
             source_attrs = {key: file["data"].attrs[key]
                             for key in ("robolab_omy_teleop", "robolab_omy_collection") if key in file["data"].attrs}
-        args.task = json.loads(source_attrs["robolab_omy_teleop"])["task"]
+        source_meta = json.loads(source_attrs["robolab_omy_teleop"])
+        args.task = source_meta["task"]
+        from .dataset_paths import named_output
+
         output = prepare_output(args.output_dir or
-                                Path("output/omy_mimicgen") / datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+                                Path("output/omy_mimicgen") / named_output(
+                                    first, args.task, datetime.now().strftime("%Y%m%d_%H%M%S_%f")))
         robolab.constants.set_output_dir(str(output))
         # Same historical flag as collection: it enables the policy-observation recorder terms.
         robolab.constants.RECORD_IMAGE_DATA = True
-        register_omy_envs(args.task, images=False, stream=False)
+        register_omy_envs(args.task, images=False, stream=False,
+                          task_dirs=source_meta.get("task_dirs"), expected_source=source_meta.get("task_source"))
         names = [name for name in get_envs(task=args.task) if name.endswith(ENV_POSTFIX)]
         if len(names) != 1:
             raise ValueError(f"Expected one OMY task environment, found {names}")
         cfg = parse_env_cfg(names[0], device=args.device, num_envs=1, seed=args.seed, use_fabric=True)
         cfg.episode_length_s = recorded["episode_length_s"]
-        configure_performance(cfg, teleop_args(args.task, recorded))
+        options = teleop_args(args.task, recorded)
+        for key, value in vars(args).items():
+            if key.startswith("scene_settle_"):
+                setattr(options, key, value)
+        configure_performance(cfg, options)
+        cfg.recorders.mimic_poses = pose_recorder_cfg()
+        # Collection prepares supported starts rather than the authored airborne poses.
+        # Center resets on an actual successful source's initial arrangement.
+        with h5py.File(first / "omy_demos.hdf5", "r") as file:
+            eligible = [group for name, group in file["data"].items()
+                        if group.attrs.get("success", False)
+                        and (args.target_episode is None or int(name.rsplit("_", 1)[1]) == args.target_episode)
+                        and (args.target_input is not None or args.source_selection is not None
+                             or not args.episodes or int(name.rsplit("_", 1)[1]) in args.episodes)]
+            if not eligible:
+                raise ValueError("The first input has no selected successful source")
+            args.target_episode = int(eligible[0].name.rsplit("_", 1)[1])
+            for name, state in eligible[0]["initial_state/rigid_object"].items():
+                pose = state["root_pose"][0]
+                asset = getattr(cfg.scene, name)
+                asset.init_state.pos = tuple(float(v) for v in pose[:3])
+                asset.init_state.rot = tuple(float(v) for v in pose[3:7])
         success = cfg.terminations.success.params
         object_name = args.object or success["object"]
         container_name = args.container or success["container"]
@@ -354,6 +413,7 @@ def run(args):
             cfg.events = merge_events_cfg(None, {"randomize_init_pose": term})
         env = None
         results = []
+        completion_status = None
         try:
             env, cfg = create_env(cfg, policy="omy_joint_position", env_class=mimic_env_class())
             validate_environment(env)
@@ -367,16 +427,24 @@ def run(args):
             recorder.set_hdf5_file("omy_demos")
             env.reset(seed=args.seed)
             pool = DataGenInfoPool(env, cfg, env.device)
-            sources = load_sources(env, pool, args.input, object_name, container_name, args.episodes)
+            sources = load_sources(env, pool, references, object_name, container_name)
             robot = env.scene["robot"]
             arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
             recorder.set_dataset_attrs({**source_attrs, "robolab_omy_mimicgen": json.dumps({
                 "schema_version": 1, "sources": sources, "seed": args.seed,
+                "selection_strategy": args.selection_strategy, "selection_seed": args.selection_seed,
+                "nn_k": min(args.nn_k, len(sources)), "fixed_source_index": args.fixed_source_index,
+                "follow_source_schedule": args.follow_source_schedule,
+                "target_input": str(first.resolve()), "target_episode": args.target_episode,
+                "target_source_sha256": checksum(first / "omy_demos.hdf5"),
+                "target_config_sha256": checksum(first / "env_cfg.json"),
                 "joint_position_limits": robot.data.soft_joint_pos_limits[0, arm_ids].tolist(),
                 "object": object_name, "container": container_name,
                 "pose_range": None if args.no_randomize else pose_range,
                 "object_pose_range": None if args.no_randomize else object_pose_range,
                 "action_noise": args.action_noise, "interpolation_s": args.interpolation_s,
+                "synthetic": True, "task_dirs": source_meta.get("task_dirs"),
+                "preparation": cfg.omy_preparation,
             })})
             generator = DataGenerator(env=env, src_demo_datagen_info_pool=pool)
             print(f"Task: {cfg.instruction}\nOutput: {output}\nSource demonstrations: {len(sources)}", flush=True)
@@ -384,16 +452,41 @@ def run(args):
             settle_steps = round(args.settle_s / env.step_dt)
             tracker = recorder.get_term(SubtaskCompletionRecorderTerm)
             while successes < args.num_demos and len(results) < args.max_attempts:
-                seed = args.seed + len(results)
+                trial_index = len(results)
+                trial = trials[trial_index] if trials is not None else {"id": trial_index, "seed": args.seed + trial_index}
+                seed = int(trial["seed"])
                 env.reset(seed=seed)  # also exports or discards an unfinished attempt
+                from .preparation_runtime import ScenePreparation
+                preparation = ScenePreparation(env, options)
+                while True:
+                    prepared = preparation.advance()
+                    if prepared["status"] != "settling":
+                        break
+                initial_poses = {name: asset.data.root_pose_w[0].cpu().tolist()
+                                 for name, asset in env.scene.rigid_objects.items()}
+                trial_info = {"trial_id": trial["id"], "selection_seed": args.selection_seed + trial_index,
+                              "prepared_initial_poses": initial_poses}
+                if prepared["status"] != "ready":
+                    results.append({**trial_info, "seed": seed, "success": False, "steps": 0, "source": None,
+                                    "demo": None, "preparation": prepared})
+                    print(f"Attempt {len(results)}: setup rejected: {prepared['reasons']}", flush=True)
+                    if args.no_randomize and any("Cannot prepare layout:" in reason for reason in prepared["reasons"]):
+                        break
+                    continue
                 index = len(results) if args.keep_failed else successes
                 recorder.set_episode_index(index, env_ids=[0])
                 recorder.set_episode_seed(seed, env_ids=[0])
-                boundaries = generator.randomize_subtask_boundaries()
-                selected, previous = {EEF: None}, {EEF: None}
+                recorder.set_episode_preparation(prepared, env_ids=[0])
+                with trajectory_rng(args.selection_seed + trial_index):
+                    boundaries = generator.randomize_subtask_boundaries()
+                fixed_source = int(trial["source_index"]) if args.follow_source_schedule else args.fixed_source_index
+                if fixed_source is not None and not 0 <= fixed_source < len(sources):
+                    raise ValueError("Scheduled source index exceeds the pool")
+                selected, previous = {EEF: fixed_source}, {EEF: None}
                 steps = 0
                 for subtask in range(len(cfg.subtask_configs[EEF])):
-                    previous[EEF] = generator.generate_trajectory(0, EEF, subtask, boundaries, {}, selected, previous)
+                    with trajectory_rng(args.selection_seed + trial_index + subtask * 100000):
+                        previous[EEF] = generator.generate_trajectory(0, EEF, subtask, boundaries, {}, selected, previous)
                     for waypoint in previous[EEF]:
                         env.step(env.target_eef_pose_to_action(
                             {EEF: waypoint.pose}, {EEF: waypoint.gripper_action}, {EEF: waypoint.noise}))
@@ -413,7 +506,9 @@ def run(args):
                 successes += succeeded
                 # The attempt is over, so forward kinematics may move the robot. See quality.py for the consumers.
                 position_error, rotation_error = env.ik_errors()
-                results.append({"seed": seed, "success": succeeded, "steps": steps, "source": selected[EEF],
+                results.append({**trial_info, **source_record(selected[EEF], sources),
+                                "seed": seed, "success": succeeded, "steps": steps,
+                                "preparation": prepared,
                                 "demo": f"demo_{index}" if succeeded or args.keep_failed else None,
                                 "ik_position_error_m": position_error, "ik_orientation_error_rad": rotation_error,
                                 "events": None if tracker is None else [
@@ -421,8 +516,14 @@ def run(args):
                                     for event in tracker.get_events(0)]})
                 print(f"Attempt {len(results)}: {'success' if succeeded else 'failure'} after {steps} steps "
                       f"(source {selected[EEF]}); {successes}/{args.num_demos} generated.", flush=True)
+                # Preserve diagnostics after every completed attempt, including interrupted runs.
+                (output / "mimicgen_summary.json").write_text(json.dumps({
+                    "successes": successes, "attempts": results,
+                    "max_joint_step_rad": env.mimic_max_joint_step,
+                }, indent=2) + "\n")
             env.reset(seed=args.seed)
-            return 0 if successes >= args.num_demos else 1
+            completion_status = 0 if successes >= args.num_demos else 1
+            return completion_status
         finally:
             if env is not None:
                 (output / "mimicgen_summary.json").write_text(json.dumps({
@@ -430,6 +531,25 @@ def run(args):
                     "max_joint_step_rad": getattr(env, "mimic_max_joint_step", None),
                 }, indent=2) + "\n")
                 close_recording(env)
+                recording = output / "omy_demos.hdf5"
+                if recording.exists():
+                    with h5py.File(recording, "r+") as stream:
+                        for attempt in results:
+                            name = attempt.get("demo")
+                            if name is not None and name in stream["data"]:
+                                stream["data"][name].attrs["mimicgen_source"] = json.dumps({
+                                    "source_index": attempt["source"], "source": attempt.get("source_reference"),
+                                    "strategy": args.selection_strategy, "selection_seed": attempt["selection_seed"],
+                                    "trial_id": attempt["trial_id"], "target_input": str(first.resolve()),
+                                    "target_episode": args.target_episode})
+                (output / "generation_finalized.json").write_text(json.dumps({
+                    "recording_closed": True, "attempts": len(results),
+                    "successes": sum(result["success"] for result in results),
+                    "requested_successes": args.num_demos,
+                    "generation_exit_status": completion_status,
+                }, indent=2) + "\n")
+                print("MimicGen recording finalized; closing simulation environment.", flush=True)
                 env.close()
+                print("MimicGen environment closed.", flush=True)
 
     return generate()

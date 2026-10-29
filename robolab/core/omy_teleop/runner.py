@@ -100,7 +100,17 @@ def performance_settings(env, args):
     return {
         "profile": args.performance_profile,
         "physics_device": str(env.device),
+        "cuda_connections_requested": getattr(args, "cuda_connections", None),
+        "cuda_environment": getattr(args, "omy_cuda_environment", None),
+        "task_checks_requested": getattr(env.cfg, "omy_task_checks", "native"),
+        "task_checks_effective": getattr(env.cfg, "omy_task_checks_effective", "native"),
+        "task_checks_fallback_reasons": getattr(env.cfg, "omy_task_checks_fallback_reasons", []),
         "gpu_max_num_partitions": getattr(env.cfg.sim.physx, "gpu_max_num_partitions", 8),
+        "placement_checks_requested": getattr(args, "placement_checks", "independent"),
+        "placement_checks_effective": "shared" if (
+            getattr(env.cfg, "omy_shared_placement_checks", False)
+            and getattr(env, "_omy_query_cache", False)) else "independent",
+        "finger_colliders": getattr(env.cfg, "omy_finger_collider_metadata", {"profile": "original"}),
         "initial_joint_pos_rad": [env.cfg.scene.robot.init_state.joint_pos[name] for name in ARM_JOINTS],
         "physics_dt": env.cfg.sim.dt,
         "control_hz": 1 / env.step_dt,

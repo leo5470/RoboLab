@@ -152,7 +152,7 @@ def verify_render_cache(output, profile):
 
 def render_recording(source, output, *, group="data/demo_0", python=None, device="cuda:0",
                      renderer="realtime", camera_scale=1.0, camera_width=None, camera_height=None,
-                     renders_per_frame=2, min_free_bytes=64 * 1024**2, runner=None):
+                     renders_per_frame=2, min_free_bytes=64 * 1024**2, runner=None, hdf5_compression="gzip"):
     """Render a native-15 attempt for review, never replaying physics actions.
 
     Warnings are retained: a successful render is not training certification.
@@ -181,6 +181,8 @@ def render_recording(source, output, *, group="data/demo_0", python=None, device
             or isinstance(renders_per_frame, bool) or not isinstance(renders_per_frame, Integral)
             or renders_per_frame < 1):
         raise ValueError("Invalid rendering profile")
+    if hdf5_compression not in ("gzip", "lzf", "none"):
+        raise ValueError("Invalid HDF5 compression")
     if (camera_width is None) != (camera_height is None):
         raise ValueError("Camera width and height must be provided together")
     if camera_width is not None and (any(isinstance(value, bool) or not isinstance(value, Integral)
@@ -198,6 +200,7 @@ def render_recording(source, output, *, group="data/demo_0", python=None, device
                "renderer": renderer, "camera_scale": camera_scale,
                "camera_width": camera_width, "camera_height": camera_height,
                "renders_per_frame": renders_per_frame,
+               "hdf5_compression": hdf5_compression,
                "initial_warmup_renders": 8,
                "fps": 15, "alignment": "initial_state[0], then states[t-1]", "physics_replay": False,
                "profile_status": "provisional_review", "training_ready": False}
@@ -235,6 +238,7 @@ def render_recording(source, output, *, group="data/demo_0", python=None, device
                    "--output", str(temporary / "images.hdf5"), "--episode", episode["name"].removeprefix("demo_"),
                    "--device", gpu.child_device, "--headless", "--require-native15", "--renderer", renderer,
                    "--camera-scale", str(camera_scale), "--renders-per-frame", str(renders_per_frame),
+                   "--hdf5-compression", hdf5_compression,
                    "--kit_args", "--/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false "
                                  "--/renderer/activeGpu=0 --/physics/cudaDevice=0"]
         if camera_width is not None:

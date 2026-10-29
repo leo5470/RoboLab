@@ -174,7 +174,19 @@ def build_parser():
 
     parser = xr_parser()
     parser.description = f"Collect state-only L100/XR demonstrations; {RESET_KEY} resets or confirms READY."
-    parser.set_defaults(record=True, save_failures=True, num_episodes=1000)
+    parser.set_defaults(record=True, save_failures=True, num_episodes=1000,
+                        device="cuda:0", performance_profile="standard", solver_position_iterations=32,
+                        gpu_max_num_partitions=2, placement_checks="shared", task_checks="cpu",
+                        physics_workers=0, control_hz=15, render_interval=4,
+                        stepping_profile="held-target", recording_profile="compact",
+                        episode_length_s=120.0, vel_scale=2.0)
+    parser.add_argument("--cuda-connections", type=int, choices=range(1, 33), default=1,
+                        metavar="N", help="CUDA driver connections, set before simulator startup (1–32; default: 1).")
+    parser._option_string_actions["--physics-workers"].help = "PhysX CPU worker count (default: 0, main thread only)."
+    parser._option_string_actions["--device"].help = "Physics device: cuda:0 (default), cuda:N, or cpu."
+    parser._option_string_actions["--gpu-max-num-partitions"].help = "GPU solver partition limit (default: 2)."
+    parser._option_string_actions["--solver-position-iterations"].help = "Scene position-iteration cap (default: 32)."
+    parser._option_string_actions["--placement-checks"].help = "Placement evaluation (default: shared within audited boundaries)."
     parser._option_string_actions["--num-episodes"].help = (
         "Total successful episodes to collect across the selected task/layouts; "
         "object mode defaults to all layout quotas. Failed/reset attempts do not count."
@@ -185,10 +197,10 @@ def build_parser():
     from .preparation import add_arguments as preparation_arguments
 
     preparation_arguments(parser)
-    parser.add_argument("--max-attempt-steps", type=int, default=1200,
+    parser.add_argument("--max-attempt-steps", type=int, default=1800,
                         help="Maximum recorded control steps per attempt; bounds live recorder memory.")
-    parser.add_argument("--max-attempt-seconds", type=float, default=20.0,
-                        help="Maximum simulated seconds per attempt (default: 20, independent of control rate).")
+    parser.add_argument("--max-attempt-seconds", type=float, default=120.0,
+                        help="Maximum simulated seconds per attempt (default: 120, independent of control rate).")
     parser.add_argument("--collection-handoff", help=argparse.SUPPRESS)
     parser.add_argument("--collection-run-id", help=argparse.SUPPRESS)
     from .collection_options import add_arguments

@@ -50,7 +50,7 @@ recalibration; the reader only corrects whole revolutions.
 Example:
 
 ```bash
-cd /tmp2/leocheng/RoboLab && .venv/bin/python -u examples/collect_omy_xr.py --task BananaInBowlTask --source serial --port /dev/robotis_left --calib /tmp2/leocheng/RoboLab/omy_calib_robolab.json --device cuda:0 --render-gpu 0 --cpu-workers 8 --physics-workers 2 --xr-resolution-multiplier 0.8 --vel-scale 2 --stats-interval 1
+cd /tmp2/leocheng/RoboLab && .venv/bin/python -u examples/collect_omy_xr.py --task BananaInBowlTask --source serial --port /dev/robotis_left --calib /tmp2/leocheng/RoboLab/omy_calib_robolab.json --device cuda:0 --render-gpu 0 --cpu-workers 8 --physics-workers 0 --cuda-connections 1 --task-checks cpu --xr-resolution-multiplier 0.8 --vel-scale 2 --stats-interval 1
 ```
 
 For the optimized CUDA profile described below, use the Bash launcher with a
@@ -388,16 +388,63 @@ operator check. Reproduce the diagnostic without connecting a leader or XR:
 
 ### Collection profile and recording contents
 
-The launcher uses held-target stepping, compact recording, 15 Hz commands,
-render interval 4, and the 16-iteration solver cap. Select another cap with
-`--solver-position-iterations 32` or `--solver-position-iterations 64`.
+New collection sessions use held-target stepping, compact recording, 15 Hz
+commands, render interval 4, **32 position iterations and two GPU solver
+partitions**. Both the Python collector and Bash launcher default to **zero
+PhysX CPU workers, one CUDA driver connection and CPU task snapshots**.
+Kit/TBB retain eight workers. Zero PhysX workers runs the CPU portion on the
+calling thread. CUDA connections are selected before simulator startup, with
+copy-connection and launch-queue overrides cleared for the collector process.
+The previous environment is restored when the Python entry point returns.
+
+For audited single-environment placement tasks, `--task-checks cpu` packs poses,
+velocities, forces, joints, origins and the episode clock into one CPU transfer
+per control boundary. Placement checks, event tracking and scalar subtask queries
+share it. The placement settling window and event transitions retain their
+existing rules; resets/restores invalidate snapshots and timers. Unsupported
+consumers, noncompact recording and CPU physics retain the native path with
+explicit fallback reasons. Startup and HDF5 performance metadata report requested
+and effective modes.
+
+`--task-checks native` retains shared placement evaluation on the simulator's
+device. `--placement-checks independent` also disables the CPU snapshot. To
+compare the previous runtime settings in a **new** session:
+
+```bash
+scripts/collect_omy_xr.sh SimplePnp291Bowl00Task \
+  --physics-workers 2 --cuda-connections 8 --task-checks native
+```
+
+Worker counts, CUDA connections and requested task-check mode are part of the
+resume contract. Older sessions keep native checks, eight connections and the
+previous two/eight PhysX/Kit worker defaults; conflicting explicit resume flags
+are rejected. See the [implementation and verification](omy_collection_latency_implementation_20261028.md).
+
+Identical placement checks remain shared between termination and subtask
+evaluation at each audited control boundary.
 The [2026-10-24 bowl investigation](omy_physics_investigation_20261024.md)
-reproduced persistent finger penetration at 16 iterations. Its new opt-in
-candidate is `--solver-position-iterations 32 --gpu-max-num-partitions 2`;
-it improves measured 32-iteration solver cost while retaining the existing
-geometry. Partition limits default to 8, are recorded with the session, and
-cannot be changed by resume. Live XR and independent grasps still need
-validation before using the candidate for bulk collection.
+reproduced persistent finger penetration at 16 iterations. Solver, partition,
+placement-check and collider settings are recorded in the session contract.
+Resuming an older session retains its original settings, including independent
+placement evaluation; conflicting explicit options are rejected.
+
+`--finger-colliders hulls` enables experimental simpler finger/pad colliders.
+It preserves the original finger masses, COM frames and full inertia tensors
+using a versioned reference, and checks the robot asset hash and simulator
+versions. This option requires one CUDA environment and the unscaled reference
+robot. Its identity is recorded and checked on resume. The default is
+`--finger-colliders original`; hollow object geometry is retained. For example:
+
+```bash
+./scripts/collect_omy_xr.sh SimplePnp291Bowl00Task --finger-colliders hulls --log
+```
+
+The earlier [implementation verification](omy_collection_optimization_implementation_20261024.md)
+measured the production cache at 74.2 ms per headless command and the combined
+candidate at 72.7 ms, versus 75.6 ms for the 32-iteration baseline. Live XR speed
+for the subsequent worker/driver/snapshot combination is recorded in the
+[live experiment report](omy_live_xr_latency_experiments_20261027.md). Independent
+grasp/release qualification across object types remains pending.
 OMY uses `velocity_limit_sim=5.0` rad/s for the driven gripper joint; the legacy
 implicit-actuator `velocity_limit` field did not enforce a simulator limit.
 The trigger still selects fully open or fully closed targets. The gripper limit
@@ -467,22 +514,27 @@ throughout each command instead of rendering a burst and sleeping at the end.
 The rendered frame interval and overall rates appear in the periodic report
 and `omy_performance.json`; actual headset smoothness also depends on SteamVR.
 
-An experimental native-15 CUDA profile is available with explicit options:
+The default native-15 collection profile can also be specified explicitly:
 
 ```bash
 cd /tmp2/leocheng/RoboLab
 PYTHONPATH=/tmp2/leocheng/RoboLab .venv/bin/python -u examples/collect_omy_xr.py \
   --task BananaInBowlTask --source serial --port /dev/robotis_left \
   --calib /tmp2/leocheng/RoboLab/omy_calib_robolab.json \
-  --device cuda:0 --render-gpu 0 --cpu-workers 8 --physics-workers 2 \
-  --control-hz 15 --solver-position-iterations 16 --stepping-profile held-target \
+  --device cuda:0 --render-gpu 0 --cpu-workers 8 --physics-workers 0 \
+  --cuda-connections 1 --task-checks cpu \
+  --control-hz 15 --solver-position-iterations 32 --gpu-max-num-partitions 2 \
+  --placement-checks shared --stepping-profile held-target \
   --recording-profile compact --render-interval 4 \
   --xr-resolution-multiplier 0.8 --vel-scale 2 --stats-interval 1
 ```
 
 Run this from a desktop with SteamVR/ALVR and the calibrated leader available.
-The scene cap is applied before environment creation. The default remains the
-32-iteration scene with ordinary stepping, full recording, and interval 2.
+The scene cap and collider profile are applied before environment creation;
+reference mass properties are restored after collider cooking and before use.
+The direct collector and Bash launcher default to this physics, task-query,
+stepping, recording and render cadence. Generic teleoperation/evaluation retains
+its existing defaults.
 Interval 4 renders at nominal 30 Hz and requires 15 or 30 Hz commands. It keeps
 the desktop viewport enabled. Operator comfort and realtime throughput still
 need validation with the headset worn.

@@ -380,9 +380,9 @@ class DroidIKActionCfg:
         controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
         scale=1.0,
         body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.0]),
-        # Robotiq 2F-85 max height base flange -> fingertip is 162.8mm (per Robotiq spec).
-        # Uncomment to control the fingertip plane instead of the base flange.
-        # body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.1628]),
+        # This USD's fingers extend along base_link +X (jaw closing is Y).
+        # Measure the desired pad/tip offset from the actual mesh and opening;
+        # the generic Robotiq +Z convention does not apply to this asset.
     )
 
     finger_joint = BinaryJointPositionZeroToOneActionCfg(
@@ -414,9 +414,8 @@ class DroidRelIKActionCfg:
             pos=[0.0, 0.0, 0.0],
             # rot=(0.5, -0.5, 0.5, -0.5),  # Match eef_frame: rotates base_link to the EE control frame.
         ),
-        # Robotiq 2F-85 max height base flange -> fingertip is 162.8mm (per Robotiq spec).
-        # Uncomment to control the fingertip plane instead of the base flange.
-        # body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.1628]),
+        # This USD's fingers extend along base_link +X (jaw closing is Y).
+        # Measure the desired pad/tip offset from the actual mesh and opening.
     )
 
     finger_joint = BinaryJointPositionZeroToOneActionCfg(

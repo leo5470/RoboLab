@@ -46,8 +46,8 @@ def validate_args(parser, args):
         parser.error("--xr-resolution-multiplier must be finite and between 0.1 and 2.0")
     if args.desktop and args.xr_resolution_multiplier is not None:
         parser.error("--xr-resolution-multiplier requires XR (omit --desktop)")
-    if args.cpu_workers < 1 or args.physics_workers < 1:
-        parser.error("--cpu-workers and --physics-workers must be positive")
+    if args.cpu_workers < 1 or args.physics_workers < 0:
+        parser.error("--cpu-workers must be positive and --physics-workers nonnegative (0 uses the main thread)")
     if getattr(args, "frames", 0) < 0 or args.render_gpu < 0:
         parser.error("--frames and --render-gpu must be nonnegative")
     if not math.isfinite(args.xr_timeout) or args.xr_timeout <= 0:

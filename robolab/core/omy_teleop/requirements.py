@@ -143,10 +143,15 @@ def default_registry():
 
     from robolab.robots import droid
     from . import observations
+    from .mimicgen import reset_poses
+    from robolab.core.events.reset_pose import reset_pose_uniform
 
     rules = predicate_registry()
     rules[mdp.time_out] = lambda req, p: None
     rules[mdp.reset_scene_to_default] = lambda req, p: None
+    # These reset-only samplers write poses/velocities without stepping physics.
+    rules[reset_poses] = lambda req, p: None
+    rules[reset_pose_uniform] = lambda req, p: None
     for module in (droid, observations):
         for name in ("arm_joint_pos", "gripper_pos", "ee_pos", "ee_quat", "eef_pos", "eef_quat"):
             if hasattr(module, name):
@@ -157,14 +162,15 @@ def default_registry():
 def default_recorder_types():
     from robolab.core.events import basic_recorders
     from robolab.core.events.subtask_recorder import SubtaskCompletionRecorderTerm
-    from .recording import BoundaryTimeRecorder, LeaderStateRecorder
+    from .recording import BoundaryTimeRecorder, LeaderStateRecorder, MimicPoseRecorder
 
     types = {getattr(basic_recorders, name) for name in (
         "InitialStateRecorder", "PostStepStatesRecorder", "PreStepActionsRecorder",
         "PreStepFlatPolicyObservationsRecorder", "PostStepBBoxRecorder",
         "PostStepEndEffectorPoseRecorder", "PostStepRobotRootPoseRecorder",
     )}
-    return types | {SubtaskCompletionRecorderTerm, BoundaryTimeRecorder, LeaderStateRecorder}, SubtaskCompletionRecorderTerm
+    return types | {SubtaskCompletionRecorderTerm, BoundaryTimeRecorder, LeaderStateRecorder,
+                    MimicPoseRecorder}, SubtaskCompletionRecorderTerm
 
 
 def add_callable(req, func, params, source, registry, *, event=False):
