@@ -88,7 +88,7 @@ def _event_severity(name: str) -> str:
     return "neutral"
 
 
-def create_app(initial_dir: Path | None = None, scenes_dir: Path | None = None) -> FastAPI:
+def create_app(initial_dir: Path | None = None, scenes_dir: Path | None = None, *, demo_catalog=None, dataset_catalog=None) -> FastAPI:
     """Build the FastAPI app.
 
     ``initial_dir`` is optional. When provided AND the persisted source list
@@ -108,6 +108,20 @@ def create_app(initial_dir: Path | None = None, scenes_dir: Path | None = None) 
     templates = Jinja2Templates(directory=str(PKG_DIR / "templates"))
     static_dir = PKG_DIR / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    from dashboard.demonstrations import register_demonstrations
+    if demo_catalog is None:
+        from robolab.core.omy_postprocess.library import DemoCatalog
+        root = PKG_DIR.parent
+        demo_catalog = DemoCatalog([root / "output/omy_teleop"], [root / "output/omy_mimicgen"],
+                                   root / "output/demo_library")
+    register_demonstrations(app, demo_catalog)
+    from dashboard.datasets import register_datasets
+    if dataset_catalog is None:
+        from robolab.core.omy_postprocess.dataset_library import DatasetCatalog
+        root = PKG_DIR.parent / "output"
+        dataset_catalog = DatasetCatalog(root / "omy_final_pool50", root / "omy_training",
+                                         root / "omy_training_cache", demo_catalog)
+    register_datasets(app, dataset_catalog)
 
     def _asset_version() -> str:
         """File-mtime hash so /static/app.js?v=… changes whenever a file does."""

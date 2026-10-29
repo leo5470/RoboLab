@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demonstrations · RoboLab</title><link rel="stylesheet" href="/static/demonstrations.css"></head>
+<body>
+<header class="top"><a class="brand" href="/">◈ RoboLab</a><a href="/">Dashboard</a><span class="active">Demonstrations</span><a href="/dataset">Dataset</a><span class="live"><i></i> Auto refresh</span><button id="refresh">Refresh</button></header>
+<div class="shell">
+<aside><div class="aside-title">DEMONSTRATION LIBRARY</div><button id="all-tasks" class="task-button">All tasks</button><nav id="tasks" aria-label="Tasks"></nav><div class="aside-note">Collected recordings and selected MimicGen demonstrations.<br><br>New sessions appear automatically.</div></aside>
+<main>
+<div class="eyebrow">ROBOT LEARNING / VIDEO LIBRARY</div><h1 id="title">All demonstrations</h1>
+<p class="subtitle">Explore collected motion and its generated variations, one task at a time.</p>
+<div id="stats" class="stats"></div>
+<div id="hold" class="notice" hidden></div>
+<div class="toolbar"><div class="tabs" role="group" aria-label="Demonstration origin"><button data-kind="" class="selected">All</button><button data-kind="collected">Collected</button><button data-kind="generated">Generated · selected</button></div><input id="search" type="search" placeholder="Search tasks, sessions, seeds…" aria-label="Search demonstrations"></div>
+<div class="filters"><label>Layout<select id="layout"><option value="">All layouts</option></select></label><label>Session<select id="session"><option value="">All sessions</option></select></label><label>Outcome<select id="outcome"><option value="">All outcomes</option><option value="success">Recorded success</option><option value="failure">Recorded failure</option><option value="interrupted">Interrupted</option></select></label><label>Video<select id="status"><option value="">Any availability</option><option value="ready">Ready</option><option value="pending">Pending</option><option value="running">Rendering</option><option value="failed">Render failed</option><option value="unavailable">Unavailable</option></select></label><label>Review<select id="review"><option value="">All review states</option><option value="contact_review_required">Contact review required</option><option value="unverified">Unverified</option></select></label></div>
+<div class="list-heading"><span id="result-count" aria-live="polite">Loading catalog…</span><span id="updated"></span></div>
+<div id="errors" role="status"></div><div id="grid" class="grid"></div>
+<div class="pagination"><button id="previous">← Previous</button><span id="page-count"></span><button id="next">Next →</button></div>
+</main></div>
+<dialog id="viewer" aria-labelledby="viewer-title"><div class="dialog-head"><div><div id="viewer-origin" class="eyebrow"></div><h2 id="viewer-title"></h2></div><button id="close-viewer" aria-label="Close video">✕</button></div><div id="viewer-body"></div></dialog>
+<script src="/static/demonstrations.js" defer></script>
+</body></html>

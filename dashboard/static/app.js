@@ -3274,7 +3274,7 @@ async function boot() {
   $('#source-input').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); addSourceFromInput(); }
   });
-  for (const btn of document.querySelectorAll('.topnav-tab, .topnav-brand')) {
+  for (const btn of document.querySelectorAll('.topnav-tab[data-route], .topnav-brand')) {
     btn.addEventListener('click', () => setRoute(btn.dataset.route));
   }
   // Wire the topnav-brand Ribble — mouseenter/mouseleave on the button

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dataset · RoboLab</title><link rel="stylesheet" href="/static/demonstrations.css"><link rel="stylesheet" href="/static/dataset.css"></head>
+<body>
+<header class="top"><a class="brand" href="/">◈ RoboLab</a><a href="/">Dashboard</a><a href="/demonstrations">Demonstrations</a><span class="active" aria-current="page">Dataset</span><span class="live"><i></i> Auto refresh</span><button id="refresh">Refresh</button></header>
+<div class="shell"><aside><div class="aside-title">TRAINING DATASET</div><button id="all-datasets" class="task-button">All families</button><nav id="tasks" aria-label="Dataset families"></nav><div class="aside-note">The final 50-demo selection for each family.<br><br>Human demonstrations and MimicGen variations, with both policy cameras.</div></aside>
+<main><div class="eyebrow">ROBOT LEARNING / SELECTED TRAINING DATA</div><h1 id="title">Training dataset</h1><p class="subtitle">50 selected demos per family · up to 10 human demonstrations, filled with generated variations.</p>
+<div id="stats" class="stats"></div><details id="export-panel"><summary id="export-summary">Family export status</summary><div id="exports" class="exports"></div></details>
+<div class="toolbar"><div class="tabs" role="group" aria-label="Demo origin"><button data-kind="" class="selected">All</button><button data-kind="collected">Human</button><button data-kind="generated">Generated</button></div><input id="search" type="search" placeholder="Search layouts or sessions…" aria-label="Search dataset"></div>
+<div class="filters"><label>Layout<select id="layout"><option value="">All layouts</option></select></label></div>
+<div class="list-heading"><span id="result-count" aria-live="polite">Loading dataset…</span><span id="updated"></span></div><div id="errors" role="status"></div><div id="grid" class="grid"></div>
+<div class="pagination"><button id="previous">← Previous</button><span id="page-count"></span><button id="next">Next →</button></div>
+</main></div>
+<dialog id="viewer" aria-labelledby="viewer-title"><div class="dialog-head"><div><div id="viewer-origin" class="eyebrow"></div><h2 id="viewer-title"></h2></div><button id="close-viewer" aria-label="Close viewer">✕</button></div><div id="viewer-body"></div></dialog>
+<script src="/static/dataset.js" defer></script></body></html>
