@@ -36,6 +36,7 @@ The core concepts are:
 - **[Environment Generation](environment_generation.md)** — Contact sensor creation, subtask trackers, and runtime environment internals
 - **[Running Environments](environment_run.md)** — Creating environments, evaluation scripts, CLI reference, and robustness testing
 - **[OMY-L100 Teleoperation](omy_teleoperation.md)** — Upstream OMY joint-space control, demonstration recording, and TCP operator video
+- **[SteamVR 2.16.7 Installation](steamvr_2_16_7.md)** — Pinned Linux runtime, ALVR compatibility fixes, update protection, and recovery
 - **[OMY MimicGen](omy_mimicgen.md)** — Expanding L100 demonstrations of a task with Isaac Lab Mimic
 - **[`num_envs` VRAM size guide](env_vram_size_guide.md)** — Per-task `num_envs` ceiling on L40, measured against pi05
 #### Policy

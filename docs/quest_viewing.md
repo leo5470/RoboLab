@@ -42,7 +42,10 @@ Isaac's window; it does not remove SteamVR's desktop/runtime requirements.
    on first launch. Do not blindly downgrade CUDA/drivers to COLLAB-SIM's old
    Isaac Sim 4.5 recommendations. Do not launch Steam or Isaac as root.
 
-2. Launch `steam`, sign in, install **SteamVR**, and launch it once.
+2. Launch `steam`, sign in, install **SteamVR**, and launch it once. For the
+   pinned RoboLab pipeline, follow [Install SteamVR 2.16.7](steamvr_2_16_7.md)
+   to install the exact build, apply the ALVR fixes, and prevent Steam updates
+   from replacing that copy. Steam's `previous` branch does not pin 2.16.7.
 3. Install matching ALVR server and headset client versions from the
    [official releases](https://github.com/alvr-org/ALVR/releases). The release
    checked for this implementation is 20.14.1. The Linux launcher can install
@@ -56,12 +59,15 @@ Isaac's window; it does not remove SteamVR's desktop/runtime requirements.
    SteamVR completely and start it again from ALVR. The SteamVR driver list
    (`vrpathreg show`) should include `alvr_server`. In ALVR's Devices tab,
    trust the headset when it appears.
-6. Start SteamVR from ALVR and verify **SteamVR Home appears in the headset** and
-   follows head rotation and translation. This is the transport acceptance test,
-   before adding Isaac Sim.
+6. Start SteamVR from ALVR and verify **an image appears in the headset** and
+   follows head rotation and translation. SteamVR Home is optional; close it
+   if its desktop window opens fullscreen. This is the transport acceptance
+   test, before adding Isaac Sim.
 
 Use ALVR's [Linux troubleshooting guide](https://github.com/alvr-org/ALVR/blob/master/wiki/Linux-Troubleshooting.md)
-if the display is black despite tracking. In particular, its SteamVR launch
+if the display is black despite tracking. For the pinned 2.16.7 setup, use the
+dedicated launcher and fixes in the [installation guide](steamvr_2_16_7.md);
+keep its Steam launch option. For other installations, the general SteamVR launch
 workaround uses the actual installation's `bin/vrmonitor.sh %command%`. Resolve
 that path from Steam's storage settings; don't copy a different user's path or
 apply downloaded patch scripts without inspection.
@@ -85,7 +91,7 @@ nonstandard Steam library, specify it explicitly:
   --runtime-json /absolute/path/to/SteamVR/steamxr_linux64.json
 ```
 
-Once SteamVR Home is working:
+Once the headset image and tracking are working:
 
 ```bash
 .venv/bin/python examples/view_xr.py --task BananaInBowlTask
