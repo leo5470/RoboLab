@@ -37,8 +37,10 @@ USD layer hashes; verify hashes before reusing evidence.
 The checker uses transformed bounding envelopes, includes root scales/pivots,
 checks pair separation and complete table footprint, and checks authored geometry
 bottoms against the support top. Defaults are 20 mm pair clearance, 10 mm edge
-clearance, and bottom gaps from −1 to +5 mm. Start new placements at +2 mm. These
-are screening thresholds, not exact mesh penetration or robot grasp checks.
+clearance, and bottom gaps from −1 to +5 mm. Start new placements in contact
+(0 mm). Separately check that `GroundPlane` sits at the measured table bottom
+(see [scene_format.md](scene_format.md)). These are screening thresholds, not
+exact mesh penetration or robot grasp checks.
 The support's bounding rectangle must actually describe a usable tabletop;
 a shelf assembly, hollow bin, or arbitrary mesh is not automatically a support.
 
@@ -64,9 +66,19 @@ settings and reset seeds. Check robot/start collisions before advancing physics.
 Where possible, observe contacts and poses per physics step so transient launches
 or tipping cannot disappear behind a later stationary pose.
 
-For ordinary tabletop pickup scenes, a useful initial protocol is three reset
-seeds, at least five simulated seconds of observation per reset, and a final
-continuous 0.5 s stable window. These are qualification defaults, not a universal
+For ordinary tabletop pickup scenes, a useful initial protocol is:
+
+- one nominal run in a fresh environment;
+- several runs with a recorded, seeded perturbation of the start pose (for
+  example ±2 mm XY and ±2° yaw);
+- at least five simulated seconds of observation per run;
+- a final continuous 0.5 s stable window.
+
+Require every run to pass. Plain reset seeds are not evidence when resets do not
+randomize the scene. In a 2026-11-02 OMY-profile test, seeds 0, 1, and 2 gave
+identical post-reset states, and separate processes reproduced positions exactly.
+Successive resets in one process drifted 0.2–0.5 mm, even with the same seed. Run
+each case in its own environment, or record its position in the reset sequence. These are qualification defaults, not a universal
 profile for intentional dynamic/unstable tasks. Declare a task-specific profile
 when the requested initial state legitimately differs; do not weaken it after
 seeing failures just to qualify a layout.
@@ -74,7 +86,9 @@ seeing failures just to qualify a layout.
 Require actual support on the intended surface, no unintended object/robot
 contacts, upright destination where required, and a retained graspable target pose.
 Track displacement from the intended start as well as recent drift: an object
-launched to another resting position must not pass. Example flat-start limits
+launched to another resting position must not pass. Track the support's pose too.
+A table that moves at startup indicates a base-scene setup error, such as a
+ground plane above the table bottom. Do not attribute that motion to the objects. Example flat-start limits
 are 20 mm total translation, 15° change in local-up direction, 0.01 m/s linear
 speed, 0.5 rad/s angular speed, and stable-window drift within 1 mm / 0.5°.
 Report chosen limits and measured maxima; do not label these values as results.
@@ -83,6 +97,10 @@ The existing OMY `ScenePreparation` gate has shorter minimum/stable windows and
 supports the collection profile described in `docs/omy_xr_collection.md`. A
 `ready` report proves only its implemented checks, not the longer protocol above
 or grasp feasibility. Read the current code/profile before reusing its evidence.
+It also re-seats every object at a fixed 2 mm clearance (`PreparationSettings`,
+which rejects 0). Its height correction, layout preflight, and tilt rejection run
+only when the scene's parent directory is named exactly `simple_pnp`. A scene in
+any other directory silently skips them.
 
 `assets/scenes/_utils/settle_scenes.py` can produce a settled candidate:
 

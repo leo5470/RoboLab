@@ -13,6 +13,15 @@ Y=[−0.40, 0.40] region is a planning convention, not proof of support or reach
 Measure the composed tabletop and check the full footprint, not just the root
 position. Robot reach depends on the robot configuration.
 
+The standard base's table is a dynamic rigid body, 0.70 m tall (Z −0.70 to 0).
+Its `GroundPlane` is authored at Z = −0.697, so the table starts 3 mm inside the
+ground. PhysX pushes it up 3 mm at the first step, together with everything on
+it. Measured in simulation: table root Z −0.350 → −0.347. In a new scene layer,
+author `GroundPlane`'s translate at the measured table bottom (−0.700 for the
+standard table). Leave `base_empty.usda` unchanged unless the user asks, because
+existing scenes and their evidence depend on it. Recheck if the table or its
+height changes.
+
 ## Paths and layers
 
 Use `os.path.relpath(asset_path, scene_path.parent)` for each asset path authored
@@ -27,11 +36,34 @@ retaining the same payload. Task object names must match those scene prim names.
 Author translation, quaternion orientation `(w, x, y, z)`, and intended scale in
 `xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]`.
 Payload roots often already author transform operations. Reuse their existing
-attributes with the declared precision and set the operation order once; adding
-a duplicate translate/orient/scale operation raises an authoring error.
+attributes with the declared precision; adding a duplicate translate/orient/scale
+operation raises an authoring error.
+
+**Preserve any rotation the payload root authors.** Assets can fix their up-axis
+with a root op such as `rotateXYZ`, `rotateX`, `rotateZYX`, `orient`, or `transform`.
+Writing `xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]`
+with a yaw-only `orient` silently drops that op from evaluation. For example,
+`assets/objects/hot3d/computer_mouse.usd` authors `rotateXYZ = (90, 0, 0)` to lie
+flat. With it discarded, every v1 Simple-PnP mouse started on its side (11 cm tall
+instead of 4.2 cm) and toppled. Before writing the pose, read the root's
+`GetOrderedXformOps()`. Then either:
+
+- keep the existing rotation op in the order after the new yaw, for example
+  `["xformOp:translate", "xformOp:orient", "xformOp:rotateXYZ", "xformOp:scale"]`
+  with `orient` as the yaw only; or
+- author a single `orient` equal to yaw ⊗ (the root's existing rotation), and
+  remove the old rotation op from the order.
+
+The first form keeps the asset's correction visible. In both forms, yaw is about
+world Z, applied after the asset's own rotation.
+
 For yaw in **degrees**, use `angle = math.radians(yaw) / 2` then quaternion
-`(cos(angle), 0, 0, sin(angle))`. Identity orientation preserves the asset's
-authored axes; it does not establish that its opening faces upward.
+`(cos(angle), 0, 0, sin(angle))`. A yaw-only orientation keeps the asset's resting
+orientation only when the asset's own root rotation is preserved as above. It
+does not establish that an opening faces upward. After writing, check each object's
+composed local up-axis and transformed dimensions against its intended resting
+pose. A height that matches a horizontal catalog dimension indicates a dropped
+rotation.
 
 ## Bounds and root height
 
@@ -49,12 +81,21 @@ from robolab.core.scenes.placement import supported_root_height
 # All three coordinates are in the same world frame, in meters.
 new_root_z = supported_root_height(
     old_root_z, transformed_geometry_bottom_z, actual_support_top_z,
-    clearance=0.002,
+    clearance=0.0,  # start in contact; the helper's default is 0.002
 )
 ```
 
-This equals `old_root_z + actual_support_top_z + 0.002 - bottom_z`. It works for
-bottom-origin and centered-origin assets. Apply the world displacement in the
+This equals `old_root_z + actual_support_top_z - bottom_z`, which puts the
+transformed bottom on the support. It works for bottom-origin and
+centered-origin assets.
+
+Start in contact only after checking the collision geometry. Collision prims
+must not extend below the visual bottom. `convexDecomposition` hulls are cooked
+at load time, so the authored check cannot cover them; measure start-up motion in
+simulation. In a 2026-11-02 test with the corrected ground plane, contact starts
+left the table motionless and moved objects 0.01–0.22 mm in total. A 2 mm start
+dropped them about 2 mm. Use a small positive clearance only when a measured
+collision bottom requires it, and record the reason. Apply the world displacement in the
 appropriate parent frame if the object has a transformed parent. Recompose and
 recheck the result. For a stack, use the intended support's surface. For a hollow
 container, inspect its interior floor and walls; its outer bounding-box top is
@@ -82,6 +123,9 @@ every object before export.
 
 Reopen the written file and check default prim, units, resolved payloads and
 composition errors, complete transforms, support relationships, and clearance.
+Check that every root rotation the payload authored is still in the evaluated op
+order, and that each object's composed up-axis matches its intended resting pose.
+Check that `GroundPlane` sits at the table's measured bottom.
 Visual/render bounds are conservative envelopes; unusual collision proxies can
 extend farther. Inspect collision geometry before physics qualification.
 Follow [validation.md](validation.md) for what each gate does and does not prove.
