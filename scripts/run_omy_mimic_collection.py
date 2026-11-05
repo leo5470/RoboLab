@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Resume a bounded two-GPU MimicGen collection and curate its diverse subset."""
+"""DEPRECATED: Resume a bounded two-GPU MimicGen collection and curate its diverse subset.
+
+Deprecated because the batch supervisor is superseded by the single-source pipeline. Build OMY datasets with scripts/omy_dataset_pipeline.py
+(single-source only); see docs/omy_mimicgen.md.
+"""
 
 import argparse
 from collections import Counter, defaultdict
@@ -187,6 +191,8 @@ def novel_cells(root, results):
 
 
 def main():
+    print("DEPRECATED: run_omy_mimic_collection.py: the batch supervisor is superseded by the single-source pipeline; use scripts/omy_dataset_pipeline.py (single-source).",
+          file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()

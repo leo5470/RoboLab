@@ -37,8 +37,33 @@ def shared_descriptor(episode, obj, container):
     return blocks
 
 
-def choose(rows, count, collected_count=None):
-    """Keep up to ten eligible humans, then select complementary generated motion."""
+def parent_key(row):
+    """The human recording/episode a generated row was transformed from."""
+    source = row.get("generation_source") or {}
+    if not source.get("file") or not source.get("episode"):
+        raise ValueError(f"Generated row has no single source parent: {row.get('file')} {row.get('episode')}")
+    return str(Path(source["file"]).resolve().parent), source["episode"]
+
+
+def parent_cap(available, quota):
+    """Smallest per-parent cap that can still fill the quota (balanced water-filling)."""
+    if quota <= 0:
+        return 0
+    if sum(available.values()) < quota:
+        raise ValueError(f"Need {quota} generated demos; parents provide {sum(available.values())}")
+    cap = max(1, -(-quota // max(1, len(available))))
+    while sum(min(n, cap) for n in available.values()) < quota:
+        cap += 1
+    return cap
+
+
+def choose(rows, count, collected_count=None, *, balance_parents=False):
+    """Keep up to ten eligible humans, then select complementary generated motion.
+
+    With ``balance_parents``, generated demos are spread across their human
+    parents: every parent with a candidate is represented first, and no parent
+    exceeds the smallest cap that can still fill the generated quota.
+    """
     if count < 1 or len(rows) < count:
         raise ValueError(f"Need {count} unique quality-passing demos; have {len(rows)}")
     available = Counter(r["kind"] for r in rows)
@@ -52,11 +77,17 @@ def choose(rows, count, collected_count=None):
     features, normalization = feature_matrix([r["blocks"] for r in rows])
     chosen, task_counts, kind_counts = [], Counter(), Counter()
     distances = np.full(len(rows), np.inf)
+    parents = {i: parent_key(r) for i, r in enumerate(rows)
+               if balance_parents and r["kind"] == "generated"}
+    parent_counts = Counter()
+    cap = parent_cap(Counter(parents.values()), quotas["generated"]) if balance_parents else None
 
     def add(index):
         chosen.append(index)
         task_counts[rows[index]["task"]] += 1
         kind_counts[rows[index]["kind"]] += 1
+        if index in parents:
+            parent_counts[parents[index]] += 1
         np.minimum(distances, np.linalg.norm(features - features[index], axis=1), out=distances)
 
     for kind in ("collected", "generated"):
@@ -67,6 +98,10 @@ def choose(rows, count, collected_count=None):
             continue
         while kind_counts[kind] < quotas[kind]:
             eligible = [i for i in pool if i not in chosen]
+            if kind == "generated" and balance_parents:
+                eligible = [i for i in eligible if parent_counts[parents[i]] < cap]
+                uncovered = [i for i in eligible if parent_counts[parents[i]] == 0]
+                eligible = uncovered or eligible
             if not chosen:
                 center = np.median(features[pool], axis=0)
                 add(min(eligible, key=lambda i: (float(np.linalg.norm(features[i] - center)), i)))
@@ -144,11 +179,20 @@ def gather_candidates(recordings, family, thresholds):
             quality = assess(path, thresholds, summary, grasped=[obj])
             records = generation_records(summary)
             with h5py.File(path, "r") as stream:
+                source_reason = None
+                if origin["kind"] == "generated":
+                    loaded = json.loads(stream["data"].attrs.get("robolab_omy_mimicgen", "{}")).get("sources") or []
+                    # Only single-source generations are admitted. A pool loaded for a
+                    # forced-source baseline still counts as multisource.
+                    source_reason = ("missing_generation_sources" if not loaded else
+                                     "multi_source_generation" if len(loaded) != 1 else None)
                 for ep in validation["episodes"]:
                     name = ep["name"]
                     if origin.get("accepted") is not None and name not in origin["accepted"]:
                         continue
                     reasons = list(quality[name]["failed"])
+                    if source_reason:
+                        reasons.append(source_reason)
                     if not ep["structural_valid"] or not ep["native_15_hz"] or ep["training_excluded"]:
                         reasons.append("invalid_structure_cadence_or_diagnostic")
                     if origin["kind"] == "generated" and any(

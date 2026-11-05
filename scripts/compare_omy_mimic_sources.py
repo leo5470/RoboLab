@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Qualify human sources and compare MimicGen strategies on paired scene trials."""
+"""DEPRECATED: Qualify human sources and compare MimicGen strategies on paired scene trials.
+
+Deprecated because multisource source-strategy experiments are no longer run. Build OMY datasets with scripts/omy_dataset_pipeline.py
+(single-source only); see docs/omy_mimicgen.md.
+"""
 
 import argparse
 from collections import Counter
@@ -91,6 +95,8 @@ def paired_poses(arms):
 
 
 def main():
+    print("DEPRECATED: compare_omy_mimic_sources.py: multisource source-strategy experiments are no longer run; use scripts/omy_dataset_pipeline.py (single-source).",
+          file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--session", action="append")

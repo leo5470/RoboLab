@@ -50,7 +50,7 @@ it does not certify contact physics or training readiness.
 
 ## Selected-video automation
 
-`scripts/run_omy_mimic_collection.py` automatically invokes the video service
+The deprecated batch supervisor `scripts/run_omy_mimic_collection.py` automatically invokes the video service
 after finalizing its selection. An already-running worker discovers that
 selection on its next reconciliation. The persistent worker also backfills
 historical selections. Selection publication is atomic.

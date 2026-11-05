@@ -2,15 +2,23 @@
 
 `examples/generate_omy_mimic.py` expands a few L100 teleoperation demonstrations of one pick-and-place task into many, using Isaac Lab Mimic. Isaac Lab bundles it, but importing it needs `ipython` and `ipywidgets`, which `requirements-omy.txt` installs. It does not transfer demonstrations between objects: collect source demonstrations for each task.
 
+> **Single source only.** OMY datasets generate each demonstration from exactly one
+> human source demonstration. Multisource generation (pooling several sources, source
+> selection strategies, paired strategy experiments) is **deprecated**: it remains in
+> the code for reading and reproducing older runs, prints a deprecation warning, and
+> must not be used for new datasets. The sections marked *deprecated* below describe it.
+
 ```bash
 python examples/generate_omy_mimic.py \
-    --input output/omy_teleop/<run_1> output/omy_teleop/<run_2> \
+    --input output/omy_teleop/<run> --episodes 2 \
     --output-dir output/omy_mimicgen/banana_in_bowl --num-demos 40
 ```
 
-Each `--input` is a collection run directory containing `omy_demos.hdf5` and `env_cfg.json`. Only successful episodes are used; with a single run, `--episodes 1 2 4` restricts the sources to `demo_1`, `demo_2`, and `demo_4`, and refuses any that are missing or unsuccessful. By default, the first input supplies the target environment. `--target-input` chooses that environment independently of the source pool; `--target-episode` fixes the recorded initial arrangement used as its reset anchor.
+Each `--input` is a collection run directory containing `omy_demos.hdf5` and `env_cfg.json`. Only successful episodes are used; `--episodes 2` makes `demo_2` the single source, and a missing or unsuccessful episode is refused. Without `--episodes`, every successful episode is pooled, and several `--input` directories or `--episodes` indices also pool; that is deprecated multisource generation. By default, the first input supplies the target environment. `--target-input` chooses that environment independently of the source pool; `--target-episode` fixes the recorded initial arrangement used as its reset anchor.
 
-## Multiple source demonstrations
+## Multiple source demonstrations (deprecated)
+
+*Deprecated: OMY datasets are single-source. Kept for reading and reproducing older runs.*
 
 The generator supports a pool of compatible demonstrations from different layouts
 of the same object/container task. It checks robot configuration, joint ordering, action metadata,
@@ -50,9 +58,12 @@ from the recording that defines the target scene.
 Batch generation supports `source_pool: true` in `run_config.json`, with
 `source_selection_strategy` and `source_selection_nn_k`. It pools qualified source
 manifest entries from the current family; qualification jobs remain individual.
-Pooling is opt-in while the comparative validation is in progress.
+Pooling is deprecated.
 
-## Paired source-strategy experiments
+## Paired source-strategy experiments (deprecated)
+
+*Deprecated together with multisource generation; `scripts/compare_omy_mimic_sources.py`
+prints a deprecation warning.*
 
 ```bash
 OMNI_KIT_ACCEPT_EULA=Y .venv/bin/python -B -u scripts/compare_omy_mimic_sources.py \
@@ -112,7 +123,7 @@ Recorded task folders and task-file hashes are honored during registration. Rese
 
 `--host-gpu N` uses the existing isolated GPU launcher: the requested host GPU is the only GPU exposed to the child, where it is addressed as `cuda:0`. For dedicated batch workers, `--worker-exit` exits after explicitly closing the recording and environment, avoiding a reproduced Isaac Sim 5.0 crash during subsequent plugin teardown. A parent must wait for the worker and independently validate the artifacts. `generation_finalized.json` records completed trial-loop status and recording closure; `mimic/eef_pose` holds the achieved pre-action end-effector poses for diversity comparisons.
 
-The approved 2026 collection batch uses `scripts/run_omy_mimic_collection.py --run RUN_DIRECTORY`, with frozen `source_manifest.json` and `run_config.json`. It qualifies each source, generates 300–500 quality-passing candidates per object family within a 400-attempt per-layout cap, and selects 100 per family. Completed jobs are reused on restart; unfinished job directories are preserved and refused for explicit recovery. The selector combines arrangement, achieved phase-aligned paths, joint configurations, and grasp/release geometry, with source representation constraints. Selected recordings remain in shards with matching environment configurations; `selection.json` is the combined episode index. Coverage reports compare the selected set with random sets having the same source counts. Original trajectories are copied exactly; only feature comparisons are resampled.
+*Deprecated:* the 2026 collection batch used `scripts/run_omy_mimic_collection.py --run RUN_DIRECTORY`, with frozen `source_manifest.json` and `run_config.json`. It qualifies each source, generates 300–500 quality-passing candidates per object family within a 400-attempt per-layout cap, and selects 100 per family. Completed jobs are reused on restart; unfinished job directories are preserved and refused for explicit recovery. The selector combines arrangement, achieved phase-aligned paths, joint configurations, and grasp/release geometry, with source representation constraints. Selected recordings remain in shards with matching environment configurations; `selection.json` is the combined episode index. Coverage reports compare the selected set with random sets having the same source counts. Original trajectories are copied exactly; only feature comparisons are resampled.
 
 ### Separating a completed legacy batch
 
@@ -179,7 +190,62 @@ A demonstration is split in two: up to the grasp, expressed relative to the obje
 
 Randomization replaces the task's reset events for the generation run: the object and container are offset from their scene poses and everything else is reset to its default. The object options give the grasped object a wider range than the container. Sampling does not avoid the other objects, so choose ranges that keep the object clear of them and on the table.
 
-Qualify a new source with `--no-randomize`, choosing that source recording/episode as the target anchor and forcing that source. This reproduces its arrangement and tests segmentation/controller behavior before adding randomization. With a multi-source pool, `--no-randomize` keeps the target arrangement fixed; other sources are still transformed into that target scene.
+Qualify a new source with `--no-randomize`, choosing that source recording/episode as the target anchor and forcing that source. This reproduces its arrangement and tests segmentation/controller behavior before adding randomization. With a (deprecated) multi-source pool, `--no-randomize` keeps the target arrangement fixed; other sources are still transformed into that target scene.
+
+## Single-source dataset pipeline
+
+`scripts/omy_dataset_pipeline.py` builds each session's 50-demo pool and training file:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 OMNI_KIT_ACCEPT_EULA=Y .venv/bin/python -B -u scripts/omy_dataset_pipeline.py
+```
+
+1. **Freeze** the session's eligible human demos (`output/omy_pipeline/SESSION/sources.json`).
+2. **Qualify** each human with one non-randomized single-source reproduction under the current
+   `mimicgen.py`; humans that fail are never used as sources.
+3. **Generate** single-source candidates round-robin across qualified humans, up to
+   `--candidate-factor` (1.5) times each human's share of the generated slots, within
+   `--max-attempts-per-source` (150).
+4. **Select** up to 10 humans plus generated demos balanced across their parents, and publish
+   the pool to `output/omy_final_pool50/SESSION/`. Any generated demo that loaded more than one
+   source is rejected.
+5. **Export** cameras into `output/omy_training/SESSION/training.hdf5`, then write the PPS file
+   `output/omy_pps/SESSION/pps.hdf5` (see below).
+6. **Report** status to `output/omy_pool_completion/summary.json` for the website.
+
+Without `--session`, every collected session is processed. GPUs come from
+`CUDA_VISIBLE_DEVICES` (host GPU 0 when unset). Reruns verify and skip finished sessions. A
+published pool that fails verification, such as an older multisource pool, is refused; add
+`--replace-invalid` to archive it under `output/omy_pipeline/archive/` and rebuild it.
+`--dry-run` previews selection without starting Isaac or writing anything, and
+`--stop-after qualify|generate|select` ends earlier. Stop a run with Ctrl-C (SIGINT); the next
+run resumes it.
+
+### PPS training file
+
+`output/omy_pps/SESSION/pps.hdf5` follows the PPS OMY HDF5 export specification in the
+**pi05 DROID wire convention**: each row holds what `policies/pi0_family/client.py` sends and
+each action what the server returns. `robolab/core/omy_postprocess/pps_hdf5.py` writes it.
+
+| Field | Content |
+| --- | --- |
+| file `task` | family name: the layout task IDs without their two-digit suffix, e.g. `SimplePnp230MilkjugA01` |
+| file `prompt`, `fps` | the one instruction shared by the file; `15` |
+| file `training_ready` | `false` until the acceptance checks are recorded |
+| `joint_position`, `actions[:, :7]` | measured joints and absolute targets, `panda_joint1..7` (rad), unchanged |
+| `gripper_position` | `finger_joint / (pi/4)` clipped to [0, 1], as the DROID observation term sends it |
+| `actions[:, 7]` | 0 open, 1 closed; the recorded OMY command is +1 open, -1 closed |
+| `exterior_image_1_left`, `wrist_image_left` | rollout cameras through `openpi_client.image_tools.resize_with_pad(224, 224)` |
+| `original_actions`, `raw_finger_position`, `normalized_gripper_position`, `source_step`, `timestamp`, `source_sim_*` | audit fields |
+| episode `layout_task` | the episode's RoboLab task ID, e.g. `SimplePnp230MilkjugA0100Task` |
+| episode `source_family` | the human source demo; a generated demo shares its parent's ID |
+
+Rollouts send the family name as the PPS task (or omit it) and record `layout_task` in their outcome
+records. Arm command column 2 (`panda_joint3`) is held at 0.0, the DROID home value, because the L100
+has six axes; `validation.json` records its measured range, and any other constant column fails the
+export. Generated demos carry `invalid_leader_samples` on every row because MimicGen reads no leader
+device; the export accepts that warning only when it covers every row. `manifest.json` records the
+pool, training file, RoboLab revision and these conventions.
 
 ## Filtering by quality
 
@@ -231,8 +297,9 @@ output/omy_training/SESSION/
   dataset.json
 ```
 
-To complete all available dated sessions except wooden bowl, including generating
-missing candidates for the four qualified October 28 source pools, run:
+*Deprecated:* `scripts/complete_omy_pools.py` completed the October 28 pools from
+multisource generations, which have since been archived and rebuilt single-source
+with `scripts/omy_dataset_pipeline.py`. It is described here for older runs:
 
 ```bash
 OMNI_KIT_ACCEPT_EULA=Y .venv/bin/python -B -u scripts/complete_omy_pools.py --render
@@ -271,7 +338,9 @@ not enqueue simulation renders. Episodes still waiting for camera processing
 remain visible, and their previews become available automatically as processing
 finishes. The Dataset page refreshes every 30 seconds.
 
-To replace the five older families with newly generated multisource datasets:
+*Deprecated:* `scripts/refresh_omy_multisource.py` replaced five families with multisource
+datasets. Those replacements were archived and the single-source pools restored; it is
+described here for older runs:
 
 ```bash
 OMNI_KIT_ACCEPT_EULA=Y .venv/bin/python -B -u scripts/refresh_omy_multisource.py --gpus 0 1

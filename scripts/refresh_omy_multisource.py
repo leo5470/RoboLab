@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Regenerate selected sessions from qualified human pools, then replace verified datasets."""
+"""DEPRECATED: Regenerate selected sessions from qualified human pools, then replace verified datasets.
+
+Deprecated because multisource generation is no longer used. Build OMY datasets with scripts/omy_dataset_pipeline.py
+(single-source only); see docs/omy_mimicgen.md.
+"""
 import argparse
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -285,6 +289,8 @@ class Refresh:
 
 
 def main():
+    print("DEPRECATED: refresh_omy_multisource.py: multisource generation is no longer used; use scripts/omy_dataset_pipeline.py (single-source).",
+          file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=Path('output/omy_multisource_refresh_20261029'))
     parser.add_argument('--session', action='append')
