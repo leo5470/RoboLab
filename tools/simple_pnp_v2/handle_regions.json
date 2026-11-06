@@ -1,0 +1,28 @@
+{
+ "description": "Handle regions confirmed 2026-11-02 from three-view point plots of each retained payload (tools/simple_pnp_v2/plot_handles.py; output/simple_pnp_v2_validation/inputs/handle_plots). Coordinates are the v2 rest frame: children + preserved root rotation + intended scale, root at origin, yaw 0. Each region is per-axis [min, max] bounds (null = unbounded); the handle point set is the asset points inside it. direction_deg: 0 = +X, CCW, Z up. The mesh-outline estimates in the plan were wrong for most class-A entries; these replace them.",
+ "regions": {
+  "23":  {"class": "A", "direction_deg": 180, "region": {"x": [null, -0.01]}, "note": "long stick handle toward -X; outline estimate 0 deg picked the cup rim"},
+  "24":  {"class": "A", "direction_deg": 180, "region": {"x": [null, -0.01]}, "note": "as 23"},
+  "61":  {"class": "A", "direction_deg": 270, "region": {"y": [null, -0.03]}, "note": "loop handle toward -Y (YZ view); outline estimate 97 deg"},
+  "63":  {"class": "A", "direction_deg": 0, "region": {"x": [0.045, null]}, "note": "handle toward +X; spout is -X; outline estimate 185 deg"},
+  "73":  {"class": "A", "direction_deg": 180, "region": {"x": [null, -0.045]}, "note": "matches outline estimate"},
+  "74":  {"class": "A", "direction_deg": 180, "region": {"x": [null, -0.05], "z": [0.03, null]}, "note": "outline estimate 195 deg; z bound excludes the flared base"},
+  "230": {"class": "A", "direction_deg": 90, "region": {"x": [-0.012, 0.012], "y": [0.005, null], "z": [0.09, null]}, "note": "loop handle on +Y at the shoulder (YZ view); outline estimate 270 deg"},
+  "231": {"class": "A", "direction_deg": 90, "region": {"x": [-0.012, 0.012], "y": [0.005, null], "z": [0.12, null]}, "note": "as 230"},
+  "232": {"class": "A", "direction_deg": 90, "region": {"x": [-0.015, 0.015], "y": [0.025, null], "z": [0.14, null]}, "note": "arc handle on +Y near the neck; outline estimate 270 deg"},
+  "283": {"class": "A", "direction_deg": 90, "region": {"x": [-0.012, 0.012], "y": [0.022, null], "z": [0.17, null]}, "note": "handle on +Y beside the neck; outline estimate 270 deg"},
+  "284": {"class": "A", "direction_deg": 90, "region": {"x": [-0.015, 0.015], "y": [0.025, null], "z": [0.17, null]}, "note": "as 283"},
+  "301": {"class": "A", "direction_deg": 0, "region": {"x": [0.035, null]}, "note": "handle toward +X; outline estimate 180 deg"},
+  "303": {"class": "A", "direction_deg": 45, "region": {"xy_along_deg": [45, 0.07, null]}, "note": "handle toward +X+Y; outline estimate 222 deg was the spout"},
+  "243": {"class": "A", "direction_deg": 270, "region": {"y": [null, -0.06], "z": [0.05, 0.16]}, "note": "bail rests down the -Y side: moved from class B per plan"},
+  "251": {"class": "A", "direction_deg": 270, "region": {"y": [null, -0.08], "z": [0.05, 0.17]}, "note": "bail rests down the -Y side: moved from class B per plan"},
+  "279": {"class": "A", "direction_deg": 270, "region": {"y": [null, -0.10], "z": [0.025, 0.075]}, "note": "bail rests down the -Y side: moved from class B per plan"},
+  "75":  {"class": "B", "region": {"top_fraction": 0.25}, "note": "upright masher; stick handle on top"},
+  "91":  {"class": "B", "region": {"top_fraction": 0.25}, "note": "top handle/fold"},
+  "237": {"class": "B", "region": {"top_fraction": 0.25}, "note": "carry handle on top"},
+  "238": {"class": "B", "region": {"top_fraction": 0.25}, "note": "carry handle on top"},
+  "239": {"class": "B", "region": {"top_fraction": 0.25}, "note": "carry handle on top"},
+  "242": {"class": "B", "region": {"top_fraction": 0.25}, "note": "no side-resting bail visible"}
+ },
+ "class_c": {"indices": [29, 30, 31, 25, 220, 221, 258, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 304], "region": "all points", "note": "utensils lying flat: occlusion-only screen; not individually plotted"}
+}

@@ -1,9 +1,8 @@
 # Simple-PnP v2 diagnostics
 
 Planning and investigation tools for [the v2 plan](../../docs/simple_pnp_v2_plan.md).
-They produce **diagnostic** measurements, not qualification evidence: the
-batch generator, qualification runner, and visibility renderer are not
-implemented yet. Run everything from the repository root. Write outputs under
+Diagnostics plus the v2 pipeline (freeze → generate → task drafts → qualify →
+visibility). Run everything from the repository root. Write outputs under
 `output/simple_pnp_v2_validation/`, which is gitignored.
 
 | Tool | Needs | Purpose |
@@ -16,6 +15,18 @@ implemented yet. Run everything from the repository root. Write outputs under
 | `run_isolated.py` | `bwrap`, a GPU | Run an Isaac script on one host GPU via `isolated_gpu_launch`. |
 | `start_probe.py` | Isaac, a GPU | Reset, prepare, and hold scenes in the OMY collection profile across seeds and clearances, optionally with a ground-plane candidate copy. Records every rigid body, including the table. |
 | `analyze_start_probe.py` | numpy | Summarise probes against the table's current top. Compare cases within a run and, optionally, across two runs. |
+| `run_pinned.py` | a GPU | Fallback for `run_isolated.py` when `bwrap` cannot create user namespaces (Ubuntu 24.04 `kernel.apparmor_restrict_unprivileged_userns=1`): CUDA limited to one GPU by UUID and Kit's renderer pinned to it. Not device isolation; check `nvidia-smi`. |
+| `freeze_inputs.py` | `pxr` | Step 1: allowlist, payload/dependency hashes, bin pin, exact payload geometry and root rotations, table/mount/ground, and every v1 layout (current + removed) as footprint centres. |
+| `handle_regions.json` | — | Handle classes, directions and regions confirmed from three-view point plots (replaces the outline estimates, which were wrong for most class-A entries). |
+| `handle_records.py` | `pxr` | Handle point sets in the v2 rest frame from `handle_regions.json`. |
+| `plot_handles.py` | `pxr`, matplotlib | Three-view plots of each handle record for confirmation. |
+| `generate_scenes.py` | `pxr` | Step 3: feasible-set sampling (support, clearance, reach, v1 novelty, v2 diversity, handle yaw + bin-occlusion screen), USD authoring with root rotations preserved and contact starts, independent re-audit, one record per slot. |
+| `generate_tasks.py` | — | Step 5: task drafts in `robolab/tasks/single_pnp_v2_drafts/` from authored records; with `--qualified gate_status.json`, the promoted tasks in `robolab/tasks/single_pnp_v2/` (refuses unless every slot passed every gate). |
+| `gate_status.py` | — | Per-slot gate status verified against each scene hash (`production/gate_status.json`), input to `generate_tasks.py --qualified`. |
+| `success_check.py` | Isaac | Task goal semantics: success never fires in the untouched scene and fires after the target is dropped into the bin. |
+| `qualify.py` | Isaac, a GPU | Step 4 physics: fresh OMY env per case, nominal + seeded perturbed runs, per-physics-step hold trace, limits, flushed per-case reports. |
+| `visibility.py` | Isaac, a GPU | Step 4 visibility: depth copy of OverShoulderLeft, handle points projected from the simulated final pose; area-based rule (≥ 100 px², ≥ 0.5 × the entry's distance-normalised best case, class-A angle ≤ 60°). `--yaw-offsets` runs a reference sweep. Cameras cannot be re-created in one Kit app, so run **one task per process**. |
+| `visibility_reference.py` | — | Per-entry best-case visible area from `visibility.py` sweeps (input to the gate's `--reference`). |
 
 Examples:
 
@@ -54,3 +65,28 @@ writes each task's JSON before teardown, so judge outcomes from those files.
   - 2 mm starts drop about 2 mm.
 - **Collision bottoms:** none below visual bottoms, maximum +0.83 mm. Only `computer_mouse.usd` has an up-tilting root rotation.
 - **Reach and capacity:** reach and capacity numbers as recorded in the plan.
+
+## Pipeline (2026-11-02)
+
+```bash
+I=output/simple_pnp_v2_validation/inputs
+tools/simple_pnp_v2/usd_python.sh tools/simple_pnp_v2/reach_map.py --output $I/reach_map.json
+tools/simple_pnp_v2/usd_python.sh tools/simple_pnp_v2/freeze_inputs.py --reach-map $I/reach_map.json --output $I/inputs.json
+tools/simple_pnp_v2/usd_python.sh tools/simple_pnp_v2/handle_records.py --inputs $I/inputs.json --output $I/handle_records.json
+tools/simple_pnp_v2/usd_python.sh tools/simple_pnp_v2/generate_scenes.py --inputs $I/inputs.json --handles $I/handle_records.json --layouts 1
+.venv/bin/python tools/simple_pnp_v2/generate_tasks.py --record-dir output/simple_pnp_v2_validation/generation
+.venv/bin/python tools/simple_pnp_v2/run_pinned.py cuda:0 tools/simple_pnp_v2/qualify.py --tasks <classes> --runs 5 \
+    --output output/simple_pnp_v2_validation/physics/pilot
+.venv/bin/python tools/simple_pnp_v2/run_pinned.py cuda:1 tools/simple_pnp_v2/visibility.py --tasks <one class> \
+    --handles $I/handle_records.json --inputs $I/inputs.json --yaw-offsets -180 -150 -120 -90 -60 -30 0 30 60 90 120 150 \
+    --output output/simple_pnp_v2_validation/pilot3/sweep
+python3 tools/simple_pnp_v2/visibility_reference.py --sweeps output/simple_pnp_v2_validation/pilot3/sweep \
+    --output $I/visibility_reference.json
+.venv/bin/python tools/simple_pnp_v2/run_pinned.py cuda:1 tools/simple_pnp_v2/visibility.py --tasks <one class> \
+    --handles $I/handle_records.json --inputs $I/inputs.json --reference $I/visibility_reference.json \
+    --output output/simple_pnp_v2_validation/pilot3/visibility
+```
+
+Bounds: `BBoxCache.ComputeUntransformedBound` inflates rotated prims in composed
+scenes (up to ~2x). The shared audit, the freeze, and v2 `ScenePreparation` use
+`robolab.core.scenes.placement.prim_local_bounds` (geometry points) instead.

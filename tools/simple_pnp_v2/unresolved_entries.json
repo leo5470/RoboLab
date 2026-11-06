@@ -1,0 +1,10 @@
+{
+ "description": "Retained entries whose v2 slots are recorded as unresolved and not generated or qualified (decided 2026-11-03). Each failed physics preparation in all five pilot runs (output/simple_pnp_v2_validation/physics/pilot/) and again with pose-derived speeds (physics/pose_speed_check/): they roll or slide from the authored resting pose at contact start. A fix would need a resting orientation other than yaw about the authored pose, which the plan does not allow.",
+ "entries": {
+  "4":  {"prim_name": "avocado01", "reason": "rolls from the authored pose: tipped 22.8 deg, 2.4 rad/s (pose-derived) within 0.3 s"},
+  "8":  {"prim_name": "lychee01", "reason": "rolls from the authored pose: tipped 19.3 deg within 0.3 s"},
+  "9":  {"prim_name": "orange_01", "reason": "rolls from the authored pose: tipped 17.8 deg, 2.9 rad/s within 0.2 s"},
+  "12": {"prim_name": "red_onion", "reason": "rolls from the authored pose: tipped 17.5 deg within 0.15 s"},
+  "76": {"prim_name": "remote_control", "reason": "slides 38 mm and tips 26.3 deg from the authored pose within 0.35 s"}
+ }
+}

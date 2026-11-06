@@ -16,10 +16,11 @@ robot at home for --hold-s. Every rigid body (including the table) is recorded
 per control step. analyze_start_probe.py summarises and compares the results.
 
 --ground-z writes a candidate copy of the task's scene with GroundPlane moved,
-inside <output>/candidates/simple_pnp/. ScenePreparation only runs its flat-table
-checks for parent directories named exactly "simple_pnp". Asset paths are
-absolutised, and the original scene is not modified. PreparationSettings
-rejects a clearance of 0; use a tiny positive value (e.g. 1e-5) for contact.
+inside <output>/candidates/simple_pnp/. ScenePreparation runs its flat-table
+checks only for parent directories listed in FLAT_LAYOUT_SCENE_DIRS
+(robolab/core/omy_teleop/preparation.py); the candidate folder keeps v1's
+"simple_pnp" name so any clearance is accepted. Asset paths are absolutised,
+and the original scene is not modified. A clearance of 0 starts in contact.
 This writes diagnostics, not demonstrations or qualification evidence.
 """
 import argparse
