@@ -178,10 +178,15 @@ class WristCameraCfg:
 # Contact gripper
 ########################################################
 
-# IsaacLab ContactSensor requires exactly one prim per env for filter_prim_paths_expr
-# (force_matrix_w) to work. .*_inner_finger matches 2 bodies (left + right) per env,
-# breaking filtered contact detection. Use one finger only.
-contact_gripper = {"gripper": "{ENV_REGEX_NS}/robot/Gripper/Robotiq_2F_85/left_inner_finger"}
+# IsaacLab ContactSensor requires exactly one monitored prim per sensor for
+# filter_prim_paths_expr (force_matrix_w) to work. Declare one concrete sensor
+# per inner finger, then expose their union through RoboLab's alias-group
+# convention so a valid contact on either jaw is observable.
+contact_gripper = {
+    "left_finger": "{ENV_REGEX_NS}/robot/Gripper/Robotiq_2F_85/left_inner_finger",
+    "right_finger": "{ENV_REGEX_NS}/robot/Gripper/Robotiq_2F_85/right_inner_finger",
+    "gripper": ["left_finger", "right_finger"],
+}
 
 ########################################################
 # Definitions
