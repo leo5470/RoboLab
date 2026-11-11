@@ -7,7 +7,14 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 import time
+
+# A generated placement-parameter line whose addition leaves the task otherwise
+# byte-identical. speed_source only selects how resting speed is measured
+# (simulator-reported vs pose-derived), so recordings made before it was added
+# can still be replayed, rendered and used as MimicGen sources.
+_SPEED_SOURCE_LINE = re.compile(rb'^[ \t]*"speed_source": "[a-z]+",\r?\n', re.M)
 
 
 def normalize_task_dirs(task_dirs=None) -> tuple[str, ...]:
@@ -72,14 +79,36 @@ class ResolvedTask:
         if hashlib.sha256(self.task_file.read_bytes()).hexdigest() != self.sha256:
             raise ValueError(f"Task definition changed after lookup: {self.task_file}")
 
-    def verify_expected_source(self, source) -> None:
+    def verify_expected_source(self, source) -> dict | None:
+        """Require the recorded task file, allowing only added speed_source lines.
+
+        Returns None for an exact match (or no recorded source). When the current
+        file differs from the recorded one only by added ``"speed_source": ...``
+        lines, returns a description of that difference for the caller to record.
+        """
         source = validate_task_source(source, task=self.class_name)
-        if source is not None:
-            actual = self.metadata()
-            for key in ("task_file", "class_name", "sha256"):
-                if source[key] != actual[key]:
-                    raise ValueError(f"Recorded task source {key} does not match the selected definition; "
-                                     "restore the recorded task file before rendering")
+        if source is None:
+            return None
+        actual = self.metadata()
+        for key in ("task_file", "class_name"):
+            if source[key] != actual[key]:
+                raise ValueError(f"Recorded task source {key} does not match the selected definition; "
+                                 "restore the recorded task file before rendering")
+        if source["sha256"] == actual["sha256"]:
+            return None
+        contents = self.task_file.read_bytes()
+        if hashlib.sha256(contents).hexdigest() != self.sha256:
+            raise ValueError(f"Task definition changed after lookup: {self.task_file}")
+        lines = _SPEED_SOURCE_LINE.findall(contents)
+        if not lines or hashlib.sha256(_SPEED_SOURCE_LINE.sub(b"", contents)).hexdigest() != source["sha256"]:
+            raise ValueError("Recorded task source sha256 does not match the selected definition; "
+                             "restore the recorded task file before rendering")
+        difference = {"kind": "added_speed_source", "recorded_sha256": source["sha256"],
+                      "current_sha256": actual["sha256"],
+                      "added_lines": [line.decode().strip() for line in lines]}
+        print(f"Task source {actual['task_file']}: recorded definition differs only by added "
+              f"speed_source lines {difference['added_lines']}", flush=True)
+        return difference
 
 
 def _class_names(contents: bytes, path: Path) -> list[str]:

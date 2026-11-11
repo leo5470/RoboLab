@@ -18,7 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robolab.core.omy_postprocess.automatic_dataset import discover_recordings
 from robolab.core.omy_teleop.final_dataset import gather_candidates
-from robolab.core.omy_teleop.mimic_sources import checksum, contract, STRATEGIES
+from robolab.core.omy_teleop.mimic_sources import checksum, contract, contract_differences, STRATEGIES
 from robolab.core.omy_teleop.quality import THRESHOLDS
 
 spec = importlib.util.spec_from_file_location("omy_batch", Path(__file__).with_name("run_omy_mimic_collection.py"))
@@ -137,7 +137,8 @@ def main():
                 sources = sources[:args.limit_sources]
             batch.atomic_json(snapshot, {"sources": sources, "family": family, "rejected": rejected})
         target_contract = contract(Path(sources[0]["file"]).parent)
-        if any(contract(Path(s["file"]).parent) != target_contract for s in sources):
+        # Allowed differences (speed_source) are recorded per source by mimicgen.
+        if any(contract_differences(target_contract, contract(Path(s["file"]).parent))[0] for s in sources):
             raise ValueError(f"Incompatible source contracts in {session}")
         qualified = []
         entry = report[session] = {"qualification": {}, "pilot": {}}

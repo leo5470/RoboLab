@@ -21,7 +21,7 @@ from complete_omy_pools import verify_pool, training_plan
 from robolab.core.omy_postprocess.automatic_dataset import discover_recordings, locked, process_one, verify_final
 from robolab.core.omy_postprocess.io import sha256_file
 from robolab.core.omy_teleop.final_dataset import gather_candidates, choose, export
-from robolab.core.omy_teleop.mimic_sources import contract
+from robolab.core.omy_teleop.mimic_sources import contract, contract_differences
 from robolab.core.omy_teleop.quality import THRESHOLDS
 
 LIMITS = {k: v[0] for k, v in THRESHOLDS.items()}
@@ -106,7 +106,8 @@ class Refresh:
             if family == 'wooden_bowl' or len(rows) < 2:
                 raise ValueError('Need at least two eligible human sources; wooden bowl is excluded')
             expected = contract(Path(rows[0]['file']).parent)
-            if any(contract(Path(r['file']).parent) != expected for r in rows):
+            # Allowed differences (speed_source) are recorded per source by mimicgen.
+            if any(contract_differences(expected, contract(Path(r['file']).parent))[0] for r in rows):
                 raise ValueError('Incompatible human source contracts')
             old = verify_pool(self.primary_pools / session, 50)
             humans = {r['fingerprint'] for r in old['episodes'] if r['kind'] == 'collected'}

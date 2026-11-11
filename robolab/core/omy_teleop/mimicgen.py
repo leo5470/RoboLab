@@ -365,8 +365,15 @@ def run(args):
         robolab.constants.set_output_dir(str(output))
         # Same historical flag as collection: it enables the policy-observation recorder terms.
         robolab.constants.RECORD_IMAGE_DATA = True
-        register_omy_envs(args.task, images=False, stream=False,
-                          task_dirs=source_meta.get("task_dirs"), expected_source=source_meta.get("task_source"))
+        from robolab.constants import TASK_DIR
+        from robolab.core.task.task_index import resolve_selected_task
+
+        # Verify the recorded task source once: None, or the allowed
+        # added-speed_source difference from the recorded task file.
+        resolution = resolve_selected_task(args.task, source_meta.get("task_dirs"), task_root=TASK_DIR)
+        task_source_difference = resolution.verify_expected_source(source_meta.get("task_source"))
+        register_omy_envs(args.task, images=False, stream=False, resolution=resolution,
+                          task_dirs=source_meta.get("task_dirs"))
         names = [name for name in get_envs(task=args.task) if name.endswith(ENV_POSTFIX)]
         if len(names) != 1:
             raise ValueError(f"Expected one OMY task environment, found {names}")
@@ -432,6 +439,7 @@ def run(args):
             arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
             recorder.set_dataset_attrs({**source_attrs, "robolab_omy_mimicgen": json.dumps({
                 "schema_version": 1, "sources": sources, "seed": args.seed,
+                "task_source": resolution.metadata(), "task_source_difference": task_source_difference,
                 "selection_strategy": args.selection_strategy, "selection_seed": args.selection_seed,
                 "nn_k": min(args.nn_k, len(sources)), "fixed_source_index": args.fixed_source_index,
                 "follow_source_schedule": args.follow_source_schedule,
