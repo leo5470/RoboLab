@@ -23,7 +23,7 @@ GRASP_SIGNAL = "grasp"
 LOCKED_JOINT = "panda_joint3"
 MAX_JOINT_STEP = 0.5
 
-from .mimic_sources import STRATEGIES, checksum, source_references, source_record, trajectory_rng
+from .mimic_sources import STRATEGIES, checksum, source_references, trajectory_rng
 
 
 def build_parser():
@@ -41,6 +41,14 @@ def build_parser():
     parser.add_argument("--fixed-source-index", type=int, help="Force one pool source for qualification or a single-source baseline")
     parser.add_argument("--trial-manifest", help="JSON trials list with fixed ids and scene seeds for paired comparisons")
     parser.add_argument("--follow-source-schedule", action="store_true", help="Use each trial's predetermined source_index as the baseline")
+    parser.add_argument("--select-source-per-subtask", action="store_true",
+                        help="Choose the placement segment's source separately from the grasp segment's. A fixed or "
+                             "scheduled source then applies to the grasp only; a trial's placement_source_index, "
+                             "if given, fixes the placement source.")
+    parser.add_argument("--target-manifest",
+                        help="JSON targets list giving start poses by asset name; the scene, task and success "
+                             "rule still come from the target or first input recording. Requires --target-id.")
+    parser.add_argument("--target-id", help="Row of --target-manifest to generate at")
     parser.add_argument("--output-dir", help="New run directory; an existing nonempty directory is refused.")
     parser.add_argument("--num-demos", type=int, default=40, help="Successful demonstrations to generate.")
     parser.add_argument("--max-attempts", type=int, default=200)
@@ -86,6 +94,13 @@ def validate_args(parser, args):
         parser.error("--nn-k must be positive and source index nonnegative")
     if args.follow_source_schedule and not args.trial_manifest:
         parser.error("--follow-source-schedule requires --trial-manifest")
+    if (args.target_manifest is None) != (args.target_id is None):
+        parser.error("--target-manifest and --target-id must be given together")
+    if args.target_manifest is not None:
+        if not args.no_randomize:
+            parser.error("--target-manifest places the scene exactly; it requires --no-randomize")
+        if not Path(args.target_manifest).is_file():
+            parser.error(f"{args.target_manifest} does not exist")
     if args.source_selection and args.episodes is not None:
         parser.error("Use either --source-selection or --episodes")
     if args.episodes and len(args.input) != 1:
@@ -132,6 +147,71 @@ def source_arrays(episode, object_name, container_name):
         "object_pose": poses,
         "grasp": grasp_index(actions[:, -1], poses[object_name][:, 2]),
     }
+
+
+def target_poses(manifest, target_id, required):
+    """Start poses of one explicit target, by asset name, and its manifest row.
+
+    A manifest is ``{"targets": [{"id": ..., "poses": {name: [x, y, z, qw, qx, qy, qz]}}]}``.
+    Scene preparation re-seats heights on the table, so z need only be near it.
+    """
+    rows = [row for row in json.loads(Path(manifest).read_text())["targets"] if row.get("id") == target_id]
+    if len(rows) != 1:
+        raise ValueError(f"{manifest} has {len(rows)} targets with id {target_id!r}; expected one")
+    poses = rows[0].get("poses") or {}
+    missing = sorted(set(required) - set(poses))
+    if missing:
+        raise ValueError(f"Target {target_id!r} has no pose for {missing}")
+    for name, pose in poses.items():
+        pose = np.asarray(pose, dtype=float)
+        if pose.shape != (7,) or not np.isfinite(pose).all() or np.linalg.norm(pose[3:]) < 1e-8:
+            raise ValueError(f"Target {target_id!r} pose of {name} must be 7 finite values with a nonzero quaternion")
+    return {name: [float(v) for v in pose] for name, pose in poses.items()}, rows[0]
+
+
+def execute_trial(generator, subtask_count, boundaries, seed, step, *, forced=None, later=None, per_subtask=False):
+    """Generate and execute one trial's subtask segments.
+
+    ``forced`` fixes the first segment's source (None: the generator selects).
+    Without ``per_subtask`` that source is kept for every segment, as Isaac Lab
+    does by default. With it, the stored choice is replaced before each later
+    segment by ``later`` (None: the generator selects again); Isaac Lab then
+    selects only because the config's per-subtask flag is also set.
+    ``step(waypoint)`` executes one waypoint and returns whether the episode ended.
+
+    Returns the executed segments (subtask, source, realized boundary), the last
+    executed waypoint, the step count and whether the episode ended.
+    """
+    selected, previous = {EEF: forced}, {EEF: None}
+    segments, waypoint, steps, ended = [], None, 0, False
+    for subtask in range(subtask_count):
+        if per_subtask and subtask > 0:
+            selected[EEF] = later
+        with trajectory_rng(seed + subtask * 100000):
+            previous[EEF] = generator.generate_trajectory(0, EEF, subtask, boundaries, {}, selected, previous)
+        # Nearest-neighbor strategies can return scalar tensors rather than ints.
+        source = int(selected[EEF])
+        segments.append({"subtask": subtask, "source": source,
+                         "boundary": [int(v) for v in boundaries[EEF][source, subtask]]})
+        for waypoint in previous[EEF]:
+            steps += 1
+            if step(waypoint):
+                ended = True
+                break
+        if ended:
+            break
+    return segments, waypoint, steps, ended
+
+
+def trial_lineage(segments, sources):
+    """Parent record of an attempt; the single-parent fields are None when parents differ."""
+    parents = [segment["source"] for segment in segments]
+    single = len(set(parents)) == 1
+    return {"source": parents[0] if single else None,
+            "source_reference": sources[parents[0]] if single else None,
+            "sources_by_subtask": parents,
+            "source_references_by_subtask": [sources[index] for index in parents],
+            "segments": segments}
 
 
 def teleop_args(task, recorded):
@@ -247,7 +327,9 @@ def mimic_cfg(cfg, object_name, container_name, args):
     cfg.__class__ = type(f"{type(cfg).__name__}Mimic", (type(cfg), MimicEnvCfg), {})
     cfg.datagen_config = DataGenConfig(
         name=args.task, seed=args.seed, generation_num_trials=args.num_demos,
-        generation_keep_failed=args.keep_failed, generation_select_src_per_subtask=False,
+        generation_keep_failed=args.keep_failed,
+        # The per-arm flag stays False: setting it would also override fixed and scheduled sources.
+        generation_select_src_per_subtask=bool(getattr(args, "select_source_per_subtask", False)),
         generation_transform_first_robot_pose=False, generation_interpolate_from_last_target_pose=True,
     )
     common = dict(selection_strategy=args.selection_strategy,
@@ -404,6 +486,18 @@ def run(args):
         success = cfg.terminations.success.params
         object_name = args.object or success["object"]
         container_name = args.container or success["container"]
+        target = None
+        if args.target_manifest is not None:
+            poses, row = target_poses(args.target_manifest, args.target_id, (object_name, container_name))
+            unknown = sorted(name for name in poses if getattr(cfg.scene, name, None) is None)
+            if unknown:
+                raise ValueError(f"Target {args.target_id!r} names assets absent from {args.task}: {unknown}")
+            for name, pose in poses.items():
+                asset = getattr(cfg.scene, name)
+                asset.init_state.pos, asset.init_state.rot = tuple(pose[:3]), tuple(pose[3:])
+            target = {"id": args.target_id, "manifest": str(Path(args.target_manifest).resolve()),
+                      "manifest_sha256": checksum(args.target_manifest), "poses": poses,
+                      **{k: v for k, v in row.items() if k not in ("id", "poses")}}
         mimic_cfg(cfg, object_name, container_name, args)
         pose_range, object_pose_range = (
             {"x": (-xy, xy), "y": (-xy, xy), "yaw": (-yaw, yaw)}
@@ -438,7 +532,9 @@ def run(args):
             robot = env.scene["robot"]
             arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
             recorder.set_dataset_attrs({**source_attrs, "robolab_omy_mimicgen": json.dumps({
-                "schema_version": 1, "sources": sources, "seed": args.seed,
+                # 2: per-subtask parents in attempt and episode records, optional explicit target.
+                "schema_version": 2, "sources": sources, "seed": args.seed,
+                "select_source_per_subtask": args.select_source_per_subtask, "target": target,
                 "task_source": resolution.metadata(), "task_source_difference": task_source_difference,
                 "selection_strategy": args.selection_strategy, "selection_seed": args.selection_seed,
                 "nn_k": min(args.nn_k, len(sources)), "fixed_source_index": args.fixed_source_index,
@@ -476,7 +572,7 @@ def run(args):
                               "prepared_initial_poses": initial_poses}
                 if prepared["status"] != "ready":
                     results.append({**trial_info, "seed": seed, "success": False, "steps": 0, "source": None,
-                                    "demo": None, "preparation": prepared})
+                                    "sources_by_subtask": [], "demo": None, "preparation": prepared})
                     print(f"Attempt {len(results)}: setup rejected: {prepared['reasons']}", flush=True)
                     if args.no_randomize and any("Cannot prepare layout:" in reason for reason in prepared["reasons"]):
                         break
@@ -488,21 +584,24 @@ def run(args):
                 with trajectory_rng(args.selection_seed + trial_index):
                     boundaries = generator.randomize_subtask_boundaries()
                 fixed_source = int(trial["source_index"]) if args.follow_source_schedule else args.fixed_source_index
-                if fixed_source is not None and not 0 <= fixed_source < len(sources):
+                placement_source = trial.get("placement_source_index")
+                if placement_source is not None:
+                    if not args.select_source_per_subtask:
+                        raise ValueError("Trial placement_source_index requires --select-source-per-subtask")
+                    placement_source = int(placement_source)
+                if any(index is not None and not 0 <= index < len(sources)
+                       for index in (fixed_source, placement_source)):
                     raise ValueError("Scheduled source index exceeds the pool")
-                selected, previous = {EEF: fixed_source}, {EEF: None}
-                steps = 0
-                for subtask in range(len(cfg.subtask_configs[EEF])):
-                    with trajectory_rng(args.selection_seed + trial_index + subtask * 100000):
-                        previous[EEF] = generator.generate_trajectory(0, EEF, subtask, boundaries, {}, selected, previous)
-                    for waypoint in previous[EEF]:
-                        env.step(env.target_eef_pose_to_action(
-                            {EEF: waypoint.pose}, {EEF: waypoint.gripper_action}, {EEF: waypoint.noise}))
-                        steps += 1
-                        if env.all_terminated:
-                            break
-                    if env.all_terminated:
-                        break
+
+                def execute(waypoint):
+                    env.step(env.target_eef_pose_to_action(
+                        {EEF: waypoint.pose}, {EEF: waypoint.gripper_action}, {EEF: waypoint.noise}))
+                    return bool(env.all_terminated)
+
+                segments, waypoint, steps, _ = execute_trial(
+                    generator, len(cfg.subtask_configs[EEF]), boundaries, args.selection_seed + trial_index, execute,
+                    forced=fixed_source, later=placement_source, per_subtask=args.select_source_per_subtask)
+                lineage = trial_lineage(segments, sources)
                 # Recordings stop at success, leaving the release no margin; hold the final target.
                 for _ in range(settle_steps):
                     if env.all_terminated:
@@ -514,7 +613,7 @@ def run(args):
                 successes += succeeded
                 # The attempt is over, so forward kinematics may move the robot. See quality.py for the consumers.
                 position_error, rotation_error = env.ik_errors()
-                results.append({**trial_info, **source_record(selected[EEF], sources),
+                results.append({**trial_info, **lineage,
                                 "seed": seed, "success": succeeded, "steps": steps,
                                 "preparation": prepared,
                                 "demo": f"demo_{index}" if succeeded or args.keep_failed else None,
@@ -523,7 +622,8 @@ def run(args):
                                     {key: event[key] for key in ("step", "name", "info")}
                                     for event in tracker.get_events(0)]})
                 print(f"Attempt {len(results)}: {'success' if succeeded else 'failure'} after {steps} steps "
-                      f"(source {selected[EEF]}); {successes}/{args.num_demos} generated.", flush=True)
+                      f"(source {'/'.join(map(str, lineage['sources_by_subtask']))}); "
+                      f"{successes}/{args.num_demos} generated.", flush=True)
                 # Preserve diagnostics after every completed attempt, including interrupted runs.
                 (output / "mimicgen_summary.json").write_text(json.dumps({
                     "successes": successes, "attempts": results,
@@ -547,9 +647,13 @@ def run(args):
                             if name is not None and name in stream["data"]:
                                 stream["data"][name].attrs["mimicgen_source"] = json.dumps({
                                     "source_index": attempt["source"], "source": attempt.get("source_reference"),
+                                    "parents": attempt["sources_by_subtask"],
+                                    "parent_sources": attempt["source_references_by_subtask"],
+                                    "segments": attempt["segments"],
                                     "strategy": args.selection_strategy, "selection_seed": attempt["selection_seed"],
                                     "trial_id": attempt["trial_id"], "target_input": str(first.resolve()),
-                                    "target_episode": args.target_episode})
+                                    "target_episode": args.target_episode,
+                                    "target_id": None if target is None else target["id"]})
                 (output / "generation_finalized.json").write_text(json.dumps({
                     "recording_closed": True, "attempts": len(results),
                     "successes": sum(result["success"] for result in results),

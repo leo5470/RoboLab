@@ -248,11 +248,15 @@ def verify_lineage(output, manifest, qualified):
         if row["kind"] != "generated":
             continue
         file = output / row["file"]
-        if file not in loaded:
-            with h5py.File(file, "r") as stream:
+        with h5py.File(file, "r") as stream:
+            if file not in loaded:
                 loaded[file] = json.loads(stream["data"].attrs.get("robolab_omy_mimicgen", "{}")).get("sources") or []
+            parents = json.loads(stream["data"][row["episode"]].attrs.get("mimicgen_source", "{}")).get("parents") or []
         if len(loaded[file]) != 1:
             problems.append(f"{row['episode']} in {row['file']}: generated from {len(loaded[file])} loaded sources")
+            continue
+        if len(set(parents)) > 1:
+            problems.append(f"{row['episode']} in {row['file']}: mixed parents {parents}")
             continue
         try:
             parent = parent_key(row)

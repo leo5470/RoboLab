@@ -199,6 +199,13 @@ def gather_candidates(recordings, family, thresholds):
                             records.get(name, {}).get(k) is None
                             for k in ("ik_position_error", "ik_orientation_error", "events")):
                         reasons.append("missing_generation_checks")
+                    if origin["kind"] == "generated":
+                        # Mixed-parent episodes have no single human parent; no profile admits them yet.
+                        attempt = next((a for a in (summary or {}).get("attempts", []) if a.get("demo") == name), {})
+                        parents = (attempt.get("sources_by_subtask") or json.loads(
+                            stream["data"][name].attrs.get("mimicgen_source", "{}")).get("parents") or [])
+                        if len(set(parents)) > 1:
+                            reasons.append("mixed_parent")
                     fingerprint = ep["fingerprint"]
                     if fingerprint in seen:
                         reasons.append("duplicate_trajectory")
