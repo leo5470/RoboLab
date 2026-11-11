@@ -76,6 +76,28 @@ def implementation():
     return {name: sha256_file(REPO / name) for name in IMPLEMENTATION_FILES}
 
 
+def allocate(total, weights):
+    """Split ``total`` in proportion to ``weights`` (largest remainder; ties to the earlier entry)."""
+    raw = [total * w / sum(weights) for w in weights]
+    counts = [math.floor(r + 1e-9) for r in raw]
+    for index in sorted(range(len(raw)), key=lambda i: (-(raw[i] - counts[i]), i))[:total - sum(counts)]:
+        counts[index] += 1
+    return counts
+
+
+def tier_of(ranges):
+    """The ``TIERS`` entry whose reset ranges a generated recording used, or None."""
+    obj, container = (ranges or {}).get("object_pose_range"), (ranges or {}).get("pose_range")
+    if not obj or not container:
+        return None
+    recorded = (obj["x"][1], obj["yaw"][1], container["x"][1], container["yaw"][1])
+    for name, spec in TIERS.items():
+        expected = (spec["object_pose_range"], spec["object_yaw_range"], spec["pose_range"], spec["yaw_range"])
+        if all(math.isclose(a, b, abs_tol=1e-9) for a, b in zip(recorded, expected)):
+            return name
+    return None
+
+
 def source_key(source):
     """(resolved part directory, episode): the same key as ``final_dataset.parent_key``."""
     return str(Path(source["input"]).resolve()), source["episode"]
@@ -375,6 +397,7 @@ class SessionWork:
         self.active = {}            # job id -> job
         self.stage = "prepare"      # prepare, qualify, generate, select, export, done, failed
         self.next_index = 0
+        self.tier_shortfall = {}    # tier -> candidates still missing when generation stopped
         self.status_fields = {}
         self.error = None
 
@@ -581,39 +604,87 @@ class Pipeline:
                     continue
         return have
 
+    def tier_targets(self, work):
+        """Candidate targets by (parent, tier): global tier totals, then each tier split across qualified parents.
+
+        ``candidate_factor`` × the generated quota is split over ``TIER_WEIGHTS``
+        first, so every tier is requested however many parents there are.
+        """
+        _, generated = self.humans_quota(work)
+        parents = sorted(work.qualified)
+        totals = dict(zip((t for t, _ in TIER_WEIGHTS),
+                          allocate(math.ceil(self.candidate_factor * generated), [w for _, w in TIER_WEIGHTS])))
+        targets = {}
+        for tier, total in totals.items():
+            for parent, count in zip(parents, allocate(total, [1] * len(parents))):
+                targets[parent, tier] = count
+        return totals, targets
+
+    def tier_counts(self, work):
+        """Quality-passing candidates by (parent, tier).
+
+        A row from one of this pipeline's jobs takes that job's tier; any other
+        generated row takes the tier its recorded reset ranges match, if any.
+        """
+        own = {}
+        if work.folder is not None:
+            for results in work.results.values():
+                for result in results:
+                    own[str(job_recording(work.folder, result).resolve())] = result["tier"]
+        have = Counter()
+        for row in work.rows:
+            if row["kind"] == "generated":
+                try:
+                    parent = parent_key(row)
+                except ValueError:
+                    continue
+                tier = own.get(str(Path(row["file"]).resolve())) if "file" in row else None
+                have[parent, tier or tier_of(row.get("generation_ranges"))] += 1
+        return have
+
     def plan(self, work):
-        """Next generate job, 'select', 'shortfall' or None (wait for active jobs)."""
+        """Next generate job, 'select', 'shortfall' or None (wait for active jobs).
+
+        The most underfilled tier, relative to its total, is served first, by
+        the qualified parent furthest below its share of that tier. A parent
+        may exceed its share only when no parent below it can still generate
+        that tier, so an exhausted parent's share moves to the others instead
+        of to another tier.
+        """
         quota, generated = self.humans_quota(work)
         if not generated:
             return "select"
         if not work.qualified:
             return "shortfall"
-        target = math.ceil(self.candidate_factor * generated / len(work.qualified)) if generated else 0
-        have = self.parent_counts(work)
-        reserved = Counter()
+        totals, targets = self.tier_targets(work)
+        have = self.tier_counts(work)
         for job in work.active.values():
-            reserved[source_key(job)] += job["num_demos"]
+            have[source_key(job), job["tier"]] += job["num_demos"]  # reserved until the job finishes
+        busy = {source_key(job) for job in work.active.values()}
+
+        def budget(key):
+            return self.max_attempts_per_source - sum(r["attempts"] for r in work.results[key])
+
+        def dead(key, tier):
+            previous = [r for r in work.results[key] if r["tier"] == tier]
+            return sum(r["attempts"] for r in previous) >= 20 and not any(r["accepted"] for r in previous)
+
         best = None
-        for source in work.sources:
-            key = source_key(source)
-            if key not in work.qualified or have[key] + reserved[key] >= target:
+        for priority, (tier, _) in enumerate(TIER_WEIGHTS):
+            deficit = totals[tier] - sum(have[k, tier] for k in work.qualified)
+            if deficit <= 0:
                 continue
-            if any(source_key(j) == key for j in work.active.values()):
-                continue
-            results = work.results[key]
-            used = sum(r["attempts"] for r in results)
-            remaining = self.max_attempts_per_source - used
-            tiers = []
-            for priority, (tier, weight) in enumerate(TIER_WEIGHTS):
-                previous = [r for r in results if r["tier"] == tier]
-                if sum(r["attempts"] for r in previous) >= 20 and not any(r["accepted"] for r in previous):
+            alive = [s for s in work.sources if source_key(s) in work.qualified
+                     and budget(source_key(s)) >= 1 and not dead(source_key(s), tier)]
+            below = [s for s in alive if have[source_key(s), tier] < targets[source_key(s), tier]]
+            for source in below or alive:
+                key = source_key(source)
+                if key in busy:
                     continue
-                tiers.append((sum(len(r["accepted"]) for r in previous) / weight, priority, tier))
-            if remaining < 1 or not tiers:
-                continue
-            order = ((have[key] + reserved[key]) / target, source["task"], source["episode"])
-            if best is None or order < best[0]:
-                best = (order, source, min(tiers)[2], remaining, target - have[key] - reserved[key])
+                own = have[key, tier] - targets[key, tier]
+                order = (-deficit / totals[tier], own, priority, source["task"], source["episode"])
+                if best is None or order < best[0]:
+                    best = (order, source, tier, budget(key), min(deficit, -own) if own < 0 else deficit)
         if best is not None:
             _, source, tier, remaining, missing = best
             index = work.next_index
@@ -628,7 +699,10 @@ class Pipeline:
                                       / Path(source["input"]).name)}
         if work.active:
             return None
-        eligible = sum(n for k, n in have.items() if k in work.qualified)
+        # Selection may still fill the total, but a missing tier is reported, never hidden.
+        work.tier_shortfall = {tier: totals[tier] - sum(have[k, tier] for k in work.qualified)
+                               for tier in totals if sum(have[k, tier] for k in work.qualified) < totals[tier]}
+        eligible = sum(n for (k, _), n in have.items() if k in work.qualified)
         return "select" if eligible >= generated else "shortfall"
 
     def next_task(self):
@@ -730,7 +804,8 @@ class Pipeline:
                   "generation_mode": "single_source", "generation_version": GENERATION_VERSION,
                   "qualified_human_sources": len(work.qualified),
                   "qualified_sources": [{"input": k[0], "episode": k[1]} for k in sorted(work.qualified)],
-                  "generated_per_parent": dict(sorted(parents.items()))}
+                  "generated_per_parent": dict(sorted(parents.items())),
+                  "candidate_tier_shortfall": work.tier_shortfall}
         output = self.roots["pools"] / work.name
         export(output, selected, report)
         manifest = verify_pool(output, self.count)

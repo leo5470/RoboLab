@@ -179,9 +179,10 @@ def gather_candidates(recordings, family, thresholds):
             quality = assess(path, thresholds, summary, grasped=[obj])
             records = generation_records(summary)
             with h5py.File(path, "r") as stream:
-                source_reason = None
+                source_reason, generated_meta = None, {}
                 if origin["kind"] == "generated":
-                    loaded = json.loads(stream["data"].attrs.get("robolab_omy_mimicgen", "{}")).get("sources") or []
+                    generated_meta = json.loads(stream["data"].attrs.get("robolab_omy_mimicgen", "{}"))
+                    loaded = generated_meta.get("sources") or []
                     # Only single-source generations are admitted. A pool loaded for a
                     # forced-source baseline still counts as multisource.
                     source_reason = ("missing_generation_sources" if not loaded else
@@ -235,6 +236,9 @@ def gather_candidates(recordings, family, thresholds):
                                  "config_sha256": config_sha, "num_samples": ep["sample_count"],
                                  "quality": quality[name], "warnings": ep["warnings"], "blocks": blocks,
                                  "generation_source": generated_source,
+                                 # Recorded reset ranges, from which a scheduler can recover the tier.
+                                 "generation_ranges": ({k: generated_meta.get(k) for k in ("pose_range", "object_pose_range")}
+                                                       if origin["kind"] == "generated" else None),
                                  "unavailable_checks": (["generation_ik", "generation_contacts"]
                                                         if origin["kind"] == "collected" else [])})
         except (OSError, KeyError, ValueError) as error:
