@@ -116,6 +116,8 @@ def main():
             "solver_position_cap": 16, "enable_stabilization": args.stabilization,
             "contacts": "full diagnostic", "reset_seeds": [0, 1, 2],
             "seconds_per_reset": 5, "stable_window_s": .5,
+            # Pail grasp-trial success (object_resting_in_container); matches the Simple-PnP tasks.
+            "grasp_success_speed_source": "pose",
             "limits": {"translation_m": .02, "tilt_deg": 15, "linear_m_s": .01,
                 "angular_rad_s": .5, "window_translation_m": .001, "window_rotation_deg": .5}},
         "physics": {"status": "pending", "trials": []}, "grasp": {"status": "pending", "trials": []},
@@ -133,7 +135,7 @@ from robolab.core.task.task import Task
 from robolab.core.task.conditionals import object_resting_in_container, pick_and_place, stacked, object_dropped
 def released_stack(env):
     return stacked(env, objects=["red_block", "blue_block"], order="bottom_to_top") & object_dropped(env, object=["red_block", "blue_block"])
-PARAMS = dict(object="plasticpail_a01", container="grey_bin", gripper_name="gripper", exclude_contact_with="table", settle_time_s=.5, linear_threshold=.05, angular_threshold=.5, position_tolerance=.001, rotation_tolerance_deg=.5)
+PARAMS = dict(object="plasticpail_a01", container="grey_bin", gripper_name="gripper", exclude_contact_with="table", settle_time_s=.5, linear_threshold=.05, angular_threshold=.5, position_tolerance=.001, rotation_tolerance_deg=.5, speed_source="pose")
 @configclass
 class Terminations:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
