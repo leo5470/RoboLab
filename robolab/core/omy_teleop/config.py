@@ -94,9 +94,32 @@ def _operator_wrist_camera():
     )
 
 
+def qualification_camera_cfg():
+    """OverShoulderLeftCameraCfg with depth added; identical pose and intrinsics.
+
+    For Simple-PnP v2 handle-visibility qualification. Builds a copy so the
+    shared RGB-only configuration is never edited.
+    """
+    camera = OverShoulderLeftCameraCfg().over_shoulder_left_camera.replace(
+        data_types=["rgb", "distance_to_image_plane"])
+
+    @configclass
+    class QualificationCameraCfg:
+        over_shoulder_left_camera = camera
+
+    return QualificationCameraCfg
+
+
 def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTFIX,
-                      optimized_observations=True, task_dirs=None, resolution=None, expected_source=None):
-    """Register dedicated task variants; never alter the standard DROID registrations."""
+                      optimized_observations=True, task_dirs=None, resolution=None, expected_source=None,
+                      qualification_camera=False):
+    """Register dedicated task variants; never alter the standard DROID registrations.
+
+    ``qualification_camera`` adds an OverShoulderLeft copy with depth (and no
+    image observation group); it cannot be combined with ``images``.
+    """
+    if qualification_camera and images:
+        raise ValueError("qualification_camera duplicates the over-shoulder camera; do not combine with images")
     if resolution is None:
         resolution = resolve_selected_task(task, task_dirs, task_root=TASK_DIR, expected_source=expected_source)
     elif (resolution.class_name != task and "/" not in task and "\\" not in task and not task.endswith(".py")):
@@ -133,6 +156,8 @@ def register_omy_envs(task, *, images=False, stream=False, env_postfix=ENV_POSTF
         groups["image_obs"] = generate_image_obs_from_cameras([OverShoulderLeftCameraCfg, WristCameraCfg])()
     if stream:
         cameras.append(OmyOperatorCamerasCfg)
+    if qualification_camera:
+        cameras.append(qualification_camera_cfg())
     cfg = create_env_cfg(
         str(resolution.task_file), task_dir=TASK_DIR,
         env_postfix=env_postfix, observations_cfg=generate_obs_cfg(groups)(),
