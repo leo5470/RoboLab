@@ -76,9 +76,11 @@ def runtime():
     load_definitions("robolab/core/task/subtask.py", namespace)
     load_definitions("robolab/core/task/conditionals.py", namespace, {
         "pick_and_place", "object_in_container", "object_grabbed", "object_resting_in_container",
-        "_condition_held_for_time",
+        "_condition_held_for_time", "_pose_step_speeds", "_pose_speed_state_factory",
+        "_pose_speeds_stationary", "_resting_settings",
         "resting_in_container_diagnostics",
     })
+    namespace["SPEED_SOURCES"] = ("reported", "pose")
     load_definitions("robolab/core/task/conditionals_state_machine.py", namespace)
     methods = {}
     load_definitions("robolab/core/world/world_state.py", methods,
@@ -488,3 +490,213 @@ def test_committed_single_pnp_definitions_use_matching_settled_success_and_credi
         assert success_args.arguments["container"] == row["destination"] == "grey_bin"
         for key, value in manifest["success_params"].items():
             assert success_args.arguments[key] == value, (row["task"], key)
+
+
+
+#########################################################
+# speed_source="pose": speeds from consecutive observed poses
+#########################################################
+# With dt=.1 the window needs 5 steps. Pose mode has no speed at step 0 (no
+# previous pose), so the window starts at step 1 and first succeeds at step 6.
+
+def same_tensor(a, b):
+    return torch.equal(a, b) or (a.is_floating_point() and torch.allclose(a, b, rtol=0, atol=0, equal_nan=True))
+
+
+def pose_check(runtime, world, **params):
+    return runtime.check(world, speed_source="pose", **params)
+
+
+@pytest.mark.parametrize("body", ["target", "bin"])
+def test_reported_velocity_noise_with_constant_pose_fails_reported_and_settles_by_pose(runtime, body):
+    # Snickers-bar artifact: ~.54 rad/s reported while the pose does not change.
+    world = runtime.World(dt=.1)
+    world.velocities[body][:, 5] = .54
+    world.velocities[body][:, 0] = .06
+    for step in range(12):
+        assert not runtime.check(world).any()
+        assert pose_check(runtime, world).tolist() == [step >= 6] * 3
+        advance(world)
+
+
+@pytest.mark.parametrize("body", ["target", "bin"])
+@pytest.mark.parametrize("motion", ["sliding", "rotating", "jitter"])
+def test_pose_speed_above_thresholds_fails_even_with_zero_reported_velocity(runtime, body, motion):
+    # Tolerances wide enough that only the pose-derived speed can reject.
+    loose = {"position_tolerance": 1.0, "rotation_tolerance_deg": 179.0}
+    world = runtime.World(dt=.1)
+
+    def move(step):
+        if motion == "sliding":
+            world.positions[body][:, 0] = step * .006  # .06 m/s > .05
+        elif motion == "jitter":
+            world.positions[body][:, 1] = .006 if step % 2 else 0
+        else:
+            angle = step * .06  # .6 rad/s > .5
+            world.orientations[body][:] = torch.tensor([math.cos(angle / 2), 0, 0, math.sin(angle / 2)])
+
+    for step in range(15):
+        move(step)
+        assert not pose_check(runtime, world, **loose).any()
+        advance(world)
+    move(15)
+    info = runtime.resting_in_container_diagnostics(
+        world.env, {"object": "target", "container": "bin", "exclude_contact_with": "table",
+                    "speed_source": "pose", **loose})
+    # Not yet evaluated at this step: diagnostics preview against the stored pose.
+    assert info["checks"]["object_stationary" if body == "target" else "bin_stationary"] is False
+    # Just below the thresholds the same motion settles.
+    world = runtime.World(dt=.1)
+    for step in range(8):
+        world.positions[body][:, 0] = step * .004
+        assert pose_check(runtime, world, **loose).tolist() == [step >= 6] * 3
+        advance(world)
+
+
+@pytest.mark.parametrize("body", ["target", "bin"])
+@pytest.mark.parametrize("mode,speed", [("translation", .005), ("translation", .03), ("rotation", .1)])
+def test_pose_mode_slow_drift_below_speed_limit_rejected_by_pose_window(runtime, body, mode, speed):
+    world = runtime.World(dt=.1)
+    for step in range(20):
+        if mode == "translation":
+            world.positions[body][:, 0] = step * speed * .1
+        else:
+            angle = step * speed * .1
+            world.orientations[body][:] = torch.tensor([math.cos(angle / 2), 0, 0, math.sin(angle / 2)])
+        assert not pose_check(runtime, world).any()
+        advance(world)
+
+
+@pytest.mark.parametrize("order", ["scalar_first", "batch_first"])
+def test_pose_mode_scalar_batched_and_repeated_calls_agree(runtime, order):
+    world = runtime.World(dt=.1)
+    world.velocities["target"][:, 5] = .54
+    for step in range(9):
+        world.positions["target"][:, 2] = -.04 + (.0002 if step % 2 else 0)
+        if order == "scalar_first":
+            scalar = [pose_check(runtime, world, env_id=eid) for eid in range(3)]
+            batch = pose_check(runtime, world).tolist()
+        else:
+            batch = pose_check(runtime, world).tolist()
+            scalar = [pose_check(runtime, world, env_id=eid) for eid in range(3)]
+        repeated = pose_check(runtime, world).tolist()
+        assert scalar == batch == repeated == [step >= 6] * 3, step
+        advance(world)
+
+
+def test_pose_mode_partial_reset_does_not_treat_reset_marker_as_previous_step(runtime):
+    world = runtime.World(dt=.1)
+    for _ in range(7):
+        pose_check(runtime, world)
+        advance(world)
+    assert pose_check(runtime, world).all()
+    world.reset_predicate_state([1])
+    world.env.episode_length_buf[1] = 0
+    # Step 0 after reset: the stored last == -1 equals step - 1 but is not a previous pose.
+    assert pose_check(runtime, world).tolist() == [True, False, True]
+    for step in range(1, 7):
+        advance(world)
+        assert pose_check(runtime, world).tolist() == [True, step >= 6, True], step
+    world.positions["target"][2, 0] += .01
+    advance(world)
+    assert pose_check(runtime, world).tolist() == [True, True, False]
+
+
+def test_pose_mode_observation_gap_restarts_speed_history(runtime):
+    world = runtime.World(dt=.1)
+    for _ in range(3):
+        pose_check(runtime, world)
+        advance(world)
+    advance(world, 20)
+    for step in range(7):
+        # One step to re-acquire a previous pose, then the full window.
+        assert pose_check(runtime, world).tolist() == [step >= 6] * 3, step
+        advance(world)
+
+
+def test_pose_and_reported_modes_do_not_share_timers(runtime):
+    world = runtime.World(dt=.1)
+    for _ in range(6):
+        runtime.check(world)
+        advance(world)
+    assert runtime.check(world).all()
+    assert not pose_check(runtime, world).any()
+    keys = sorted(world._predicate_state)
+    reported = [k for k in keys if k.startswith("resting_in_container::") and "'pose'" not in k]
+    pose = [k for k in keys if k.startswith("resting_in_container::") and "'pose'" in k]
+    speeds = [k for k in keys if k.startswith("resting_in_container_pose_speed::")]
+    assert len(reported) == len(pose) == len(speeds) == 1 and len(keys) == 3
+    # Reported mode keeps the historical timer key (no speed_source element).
+    settings = ("bin", ("gripper",), ("table",), .5, .05, .5, .001, .5, .01, 15.0)
+    assert reported[0] == f"resting_in_container::{('target', settings)!r}"
+    assert set(world._predicate_state[reported[0]]) == {"since", "last", "anchor_pos", "anchor_quat", "__reset__"}
+
+
+def test_unknown_speed_source_raises_before_creating_state(runtime):
+    world = runtime.World()
+    with pytest.raises(ValueError, match="speed_source"):
+        runtime.check(world, speed_source="velocity")
+    with pytest.raises(ValueError, match="speed_source"):
+        runtime.resting_in_container_diagnostics(
+            world.env, {"object": "target", "container": "bin", "speed_source": "Pose"})
+    assert not world._predicate_state
+
+
+def test_pose_mode_diagnostics_report_stored_result_without_mutating_state(runtime):
+    params = {"object": "target", "container": "bin", "exclude_contact_with": "table", "speed_source": "pose"}
+    world = runtime.World(count=1, dt=.1)
+    world.velocities["target"][:, 5] = .54
+    info = runtime.resting_in_container_diagnostics(world.env, params)
+    assert not world._predicate_state
+    assert info["speed_source"] == "pose" and info["linear_speed_m_s"] == {"object": None, "bin": None}
+    assert info["checks"]["object_stationary"] is False
+    assert info["reported_angular_speed_rad_s"]["object"] == pytest.approx(.54)
+    json.dumps(info, allow_nan=False)
+
+    def snapshot():
+        return {(key, name): value.clone() for key, state in world._predicate_state.items()
+                for name, value in state.items() if isinstance(value, torch.Tensor)}
+
+    for _ in range(3):
+        pose_check(runtime, world)
+        advance(world)
+    pose_check(runtime, world)
+    before = snapshot()
+    # Same step: the stored result, even after the pose moved since evaluation.
+    world.positions["target"][:, 0] += .05
+    info = runtime.resting_in_container_diagnostics(world.env, params)
+    assert info["checks"]["object_stationary"] and info["checks"]["bin_stationary"]
+    assert info["linear_speed_m_s"]["object"] == pytest.approx(0, abs=1e-6)
+    assert info["observed_s"] == pytest.approx(.2) and info["evaluated_step"] == 3
+    # Next step, not yet evaluated: preview against the stored pose.
+    advance(world)
+    info = runtime.resting_in_container_diagnostics(world.env, params)
+    assert info["checks"]["object_stationary"] is False
+    assert info["linear_speed_m_s"]["object"] == pytest.approx(.5)
+    # After a gap there is no previous pose.
+    advance(world, 5)
+    info = runtime.resting_in_container_diagnostics(world.env, params)
+    assert info["linear_speed_m_s"]["object"] is None and not info["checks"]["object_stationary"]
+    after = snapshot()
+    assert before.keys() == after.keys()
+    assert all(same_tensor(before[key], after[key]) for key in before)
+    reported = runtime.resting_in_container_diagnostics(world.env, {**params, "speed_source": "reported"})
+    assert reported["speed_source"] == "reported" and "reported_angular_speed_rad_s" not in reported
+    assert reported["angular_speed_rad_s"]["object"] == pytest.approx(.54)
+    assert world._predicate_state.keys() == {key for key, _ in before}
+
+
+def test_pose_mode_subtask_credit_and_termination_agree(runtime, monkeypatch):
+    monkeypatch.setattr(robolab.constants, "VERBOSE", False)
+    world = runtime.World(count=1, dt=.1)
+    world.velocities["target"][:, 5] = .54
+    params = {"exclude_contact_with": "table", "speed_source": "pose"}
+    subtask = runtime.pick_and_place(
+        object="target", container="bin", placement_func=runtime.object_resting_in_container,
+        placement_params=params)
+    sm = runtime.ConditionalsStateMachine(world.env, subtask=subtask)
+    for step in range(8):
+        terminal = bool(runtime.object_resting_in_container(world.env, object="target", container="bin", **params)[0])
+        done, *_ = sm.step()
+        assert done == terminal == (step >= 6)
+        advance(world)

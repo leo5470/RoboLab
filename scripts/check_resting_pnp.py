@@ -180,6 +180,10 @@ def main():
                                  "checks": {key: value.tolist() for key, value in checks.items()},
                                  "timer_since": [state["since"].tolist() for state in states],
                                  "placement_diagnostic": diagnostic,
+                                 # Speeds the success term compared with its thresholds
+                                 # (reported or pose-derived, per speed_source; env 0).
+                                 "check_linear_speed": diagnostic["linear_speed_m_s"]["object"],
+                                 "check_angular_speed": diagnostic["angular_speed_rad_s"]["object"],
                                  "score": [info["score"] for info in recorder.infos]}
                         trace.append(frame)
                         assert not result[1:].any(), "Table/airborne control incorrectly succeeded"
@@ -189,13 +193,14 @@ def main():
                             first_legacy = int(step[0])
                         if result[0]:
                             first_success = int(step[0])
-                            assert frame["linear_speed"][0] < term.params["linear_threshold"]
-                            assert frame["angular_speed"][0] < term.params["angular_threshold"]
+                            assert frame["check_linear_speed"] < term.params["linear_threshold"]
+                            assert frame["check_angular_speed"] < term.params["angular_threshold"]
                             required = math.ceil(term.params["settle_time_s"] / env.step_dt - 1e-9)
                             tail = trace[-(required + 1):]
                             assert len(tail) == required + 1
-                            assert all(f["linear_speed"][0] < term.params["linear_threshold"]
-                                       and f["angular_speed"][0] < term.params["angular_threshold"] for f in tail)
+                            assert all(f["check_linear_speed"] is not None
+                                       and f["check_linear_speed"] < term.params["linear_threshold"]
+                                       and f["check_angular_speed"] < term.params["angular_threshold"] for f in tail)
                             for pos_key, quat_key in (("position", "quaternion"),
                                                       ("bin_position", "bin_quaternion")):
                                 positions = torch.tensor([f[pos_key][0] for f in tail], dtype=torch.float64)

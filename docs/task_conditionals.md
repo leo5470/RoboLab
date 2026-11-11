@@ -151,6 +151,16 @@ a supported wooden bowl varied by less than 0.05 mm and 0.05° across eight seco
 while reporting linear speeds of 0.032–0.038 m/s. The 0.05 m/s cap allows this
 solver noise; genuine sliding at 0.03 m/s still fails the 1 mm pose bound.
 
+`speed_source` selects which speeds the caps apply to. `"reported"` (the default)
+uses the simulator's body velocities. `"pose"` divides the change between the
+poses observed on consecutive steps by `step_dt`, for both object and container.
+Reported velocity can exceed the caps for resting bodies: the snickers bar
+(one rigid body with 32 convex colliders) reports a median 0.54 rad/s while
+its pose stays within 1 mm and 0.4°. In pose mode the first observed step, and
+the step after a reset or observation gap, has no previous pose and does not
+count as stationary, so success comes one step later than in reported mode
+with an equally still object. The two modes keep separate settling timers.
+
 Motion, loss of support/release/containment, excluded-surface contact, or a gap in
 observations restarts the interval. Episode resets clear it per environment.
 Repeated batched or scalar calls in the same simulation step do not advance the
