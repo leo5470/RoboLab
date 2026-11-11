@@ -38,7 +38,8 @@ import h5py
 import psutil
 
 from robolab.core.omy_postprocess import pps_hdf5
-from robolab.core.omy_postprocess.automatic_dataset import discover_recordings, locked, process_one, verify_final
+from robolab.core.omy_postprocess.automatic_dataset import (WRITE_WORKERS, discover_recordings, locked, process_one,
+                                                            verify_final)
 from robolab.core.omy_postprocess.io import sha256_file
 from robolab.core.omy_postprocess.validation import validate_recording
 from .dataset_paths import job_recording, source_names
@@ -377,7 +378,7 @@ class SessionWork:
 class Pipeline:
     def __init__(self, roots, gpus, *, count=50, collected_count=None, max_attempts_per_source=150,
                  candidate_factor=1.5, dry_run=False, stop_after=None, replace_invalid=False, reverify=False,
-                 log=print):
+                 write_workers=WRITE_WORKERS, log=print):
         if stop_after not in (None, *STOP_AFTER):
             raise ValueError(f"stop_after must be one of {STOP_AFTER}")
         self.roots, self.gpus = roots, gpus
@@ -385,6 +386,7 @@ class Pipeline:
         self.max_attempts_per_source, self.candidate_factor = max_attempts_per_source, candidate_factor
         self.dry_run, self.stop_after, self.replace_invalid = dry_run, stop_after, replace_invalid
         self.reverify = reverify
+        self.write_workers = write_workers
         self.log = log
         self.status = Status(roots, dry_run)
         self.cv = threading.Condition()
@@ -740,7 +742,7 @@ class Pipeline:
             self.status.session(work, status="processing_cameras", gpu=gpu)
             process_one(work.name, self.roots["collected"], self.roots["generated"], self.roots["training"],
                         self.roots["cache"], count=self.count, collected_count=self.collected_count,
-                        device=f"cuda:{gpu}")
+                        device=f"cuda:{gpu}", write_workers=self.write_workers)
         self.verify_training(work, manifest)
         pps = self.roots["pps"] / work.name
         if not pps.exists():
