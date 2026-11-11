@@ -2,9 +2,9 @@
   "format_version": 1,
   "description": "Launch-filtered two-object tabletop PnP layouts; original IDs preserved",
   "catalog": "assets/objects/object_catalog.json",
-  "target_count": 136,
+  "target_count": 137,
   "variants_per_target": null,
-  "scene_count": 6754,
+  "scene_count": 6804,
   "destination": {
     "name": "grey_bin",
     "usd_path": "assets/fixtures/grey_bin.usd",
@@ -173165,6 +173165,2306 @@
       ]
     },
     {
+      "scene": "pnp_229_metalfstylecan_a01_00.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6366331477135495,
+        "y": -0.2057447514887914,
+        "yaw": 46.85697117484441
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.50908937984,
+        "y": 0.2687862543236546,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6366331477135495,
+          "y": -0.2057447514887914,
+          "yaw": 46.85697117484441
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.50908937984,
+          "y": 0.2687862543236546,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_01.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4443490053597211,
+        "y": 0.24347604525184902,
+        "yaw": 245.38930826938838
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.56228937984,
+        "y": -0.04785499596352155,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4443490053597211,
+          "y": 0.24347604525184902,
+          "yaw": 245.38930826938838
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.56228937984,
+          "y": -0.04785499596352155,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_02.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.44867014942426126,
+        "y": -0.24963104259758412,
+        "yaw": 82.87208268171656
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.56356937984,
+        "y": 0.19046205888245887,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.44867014942426126,
+          "y": -0.24963104259758412,
+          "yaw": 82.87208268171656
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.56356937984,
+          "y": 0.19046205888245887,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_03.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5935511929009432,
+        "y": 0.28904824311284355,
+        "yaw": 330.75528548697616
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.60524937984,
+        "y": -0.1757212619289611,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5935511929009432,
+          "y": 0.28904824311284355,
+          "yaw": 330.75528548697616
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.60524937984,
+          "y": -0.1757212619289611,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_04.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4376889442842555,
+        "y": -0.10073871246338756,
+        "yaw": 322.6737117110496
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.5184493798400001,
+        "y": 0.22895942928065577,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4376889442842555,
+          "y": -0.10073871246338756,
+          "yaw": 322.6737117110496
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.5184493798400001,
+          "y": 0.22895942928065577,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_05.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5715864912163702,
+        "y": 0.15626663136968055,
+        "yaw": 211.58505755194915
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.56972937984,
+        "y": -0.0872273065980411,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5715864912163702,
+          "y": 0.15626663136968055,
+          "yaw": 211.58505755194915
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.56972937984,
+          "y": -0.0872273065980411,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_06.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4649498759083121,
+        "y": -0.22999892352822127,
+        "yaw": 160.32147627914628
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.43492937984,
+        "y": 0.2624571411855802,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4649498759083121,
+          "y": -0.22999892352822127,
+          "yaw": 160.32147627914628
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.43492937984,
+          "y": 0.2624571411855802,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_07.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5030150438937006,
+        "y": 0.14839185283710216,
+        "yaw": 254.94710783433163
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.6238253798400001,
+        "y": -0.2150935725634806,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5030150438937006,
+          "y": 0.14839185283710216,
+          "yaw": 254.94710783433163
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.6238253798400001,
+          "y": -0.2150935725634806,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_08.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6198879899310932,
+        "y": -0.2674210188711553,
+        "yaw": 246.7155965323741
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.47750537984,
+        "y": 0.18458746015286387,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6198879899310932,
+          "y": -0.2674210188711553,
+          "yaw": 246.7155965323741
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.47750537984,
+          "y": 0.18458746015286387,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_09.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6077221797294222,
+        "y": -0.012565469707624122,
+        "yaw": 83.1702279090623
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.48070537984,
+        "y": -0.23705040611310152,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6077221797294222,
+          "y": -0.012565469707624122,
+          "yaw": 83.1702279090623
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.48070537984,
+          "y": -0.23705040611310152,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_10.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6174648850254578,
+        "y": 0.31812325403471503,
+        "yaw": 273.45600107191103
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.48198537984,
+        "y": 0.001266648732878961,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6174648850254578,
+          "y": 0.31812325403471503,
+          "yaw": 273.45600107191103
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.48198537984,
+          "y": 0.001266648732878961,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_11.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6090494027855754,
+        "y": -0.18250069574336844,
+        "yaw": 118.28571425974974
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.48326537984,
+        "y": 0.2345840450855871,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6090494027855754,
+          "y": -0.18250069574336844,
+          "yaw": 118.28571425974974
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.48326537984,
+          "y": 0.2345840450855871,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_12.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5461725636199765,
+        "y": 0.26117667045702275,
+        "yaw": 316.81805135429363
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.52686537984,
+        "y": -0.1315992757258329,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5461725636199765,
+          "y": 0.26117667045702275,
+          "yaw": 316.81805135429363
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.52686537984,
+          "y": -0.1315992757258329,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_13.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5624063215566291,
+        "y": -0.13182870913039585,
+        "yaw": 308.58654005233575
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.43814537984,
+        "y": 0.273081415483784,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5624063215566291,
+          "y": -0.13182870913039585,
+          "yaw": 308.58654005233575
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.43814537984,
+          "y": 0.273081415483784,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_14.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6298872667887971,
+        "y": -0.21288423228017972,
+        "yaw": 256.27339609731735
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.53904137984,
+        "y": 0.017348883552904926,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6298872667887971,
+          "y": -0.21288423228017972,
+          "yaw": 256.27339609731735
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.53904137984,
+          "y": 0.017348883552904926,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_15.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.49584141370064344,
+        "y": -0.14893172907911822,
+        "yaw": 41.299456045434454
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.49224137984000005,
+        "y": 0.14021549102507214,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.49584141370064344,
+          "y": -0.14893172907911822,
+          "yaw": 41.299456045434454
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.49224137984000005,
+          "y": 0.14021549102507214,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_16.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6252687784037815,
+        "y": 0.11883586938924745,
+        "yaw": 283.0138006368543
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.54352137984,
+        "y": -0.17097158636035237,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6252687784037815,
+          "y": 0.11883586938924745,
+          "yaw": 283.0138006368543
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.54352137984,
+          "y": -0.17097158636035237,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_17.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5242845448240625,
+        "y": -0.2866998657166123,
+        "yaw": 231.7502193640512
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.44520137983999997,
+        "y": 0.2337091048492645,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5242845448240625,
+          "y": -0.2866998657166123,
+          "yaw": 231.7502193640512
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.44520137983999997,
+          "y": 0.2337091048492645,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_18.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.44516978316981326,
+        "y": 0.1461986857268236,
+        "yaw": 326.37585091923665
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.5884013798400001,
+        "y": -0.30383751081906424,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.44516978316981326,
+          "y": 0.1461986857268236,
+          "yaw": 326.37585091923665
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.5884013798400001,
+          "y": -0.30383751081906424,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_19.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5262356420833022,
+        "y": 0.28562708140074994,
+        "yaw": 266.71576818870744
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.44968137984,
+        "y": 0.045388634936007144,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5262356420833022,
+          "y": 0.28562708140074994,
+          "yaw": 266.71576818870744
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.44968137984,
+          "y": 0.045388634936007144,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_20.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5178057316264826,
+        "y": -0.22166531292620717,
+        "yaw": 104.19854260103602
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.45288137984,
+        "y": 0.2837056897819877,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5178057316264826,
+          "y": -0.22166531292620717,
+          "yaw": 104.19854260103602
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.45288137984,
+          "y": 0.2837056897819877,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_21.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6952145132946901,
+        "y": 0.23946363512274899,
+        "yaw": 351.93486782977607
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.50416137984,
+        "y": -0.032481046096709154,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6952145132946901,
+          "y": 0.23946363512274899,
+          "yaw": 351.93486782977607
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.50416137984,
+          "y": -0.032481046096709154,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_22.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4351137165197243,
+        "y": -0.030978010432813008,
+        "yaw": 240.99615119670625
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.54545737984,
+        "y": 0.20629431077782118,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4351137165197243,
+          "y": -0.030978010432813008,
+          "yaw": 240.99615119670625
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.54545737984,
+          "y": 0.20629431077782118,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_23.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5850270052832288,
+        "y": -0.3189746078386029,
+        "yaw": 79.52848829125014
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.59865737984,
+        "y": -0.10489276660760324,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5850270052832288,
+          "y": -0.3189746078386029,
+          "yaw": 79.52848829125014
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.59865737984,
+          "y": -0.10489276660760324,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_24.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6502094093667705,
+        "y": -0.10206782869012673,
+        "yaw": 19.868405560721385
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.45993737984,
+        "y": 0.24433337914746805,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6502094093667705,
+          "y": -0.10206782869012673,
+          "yaw": 19.868405560721385
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.45993737984,
+          "y": 0.24433337914746805,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_25.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4671258026279452,
+        "y": 0.17541523538333326,
+        "yaw": 276.12669017713097
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.51121737984,
+        "y": -0.1268496001572242,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4671258026279452,
+          "y": 0.17541523538333326,
+          "yaw": 276.12669017713097
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.51121737984,
+          "y": -0.1268496001572242,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_26.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4671604829008453,
+        "y": -0.12665715440754124,
+        "yaw": 113.6094645894591
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.51441737984,
+        "y": 0.11146745468875624,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4671604829008453,
+          "y": -0.12665715440754124,
+          "yaw": 113.6094645894591
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.51441737984,
+          "y": 0.11146745468875624,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_27.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6371888009827702,
+        "y": 0.14405612880184726,
+        "yaw": 1.4926673947188647
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.55609737984,
+        "y": -0.1997196226966682,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6371888009827702,
+          "y": 0.14405612880184726,
+          "yaw": 1.4926673947188647
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.55609737984,
+          "y": -0.1997196226966682,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_28.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.42132144333825383,
+        "y": -0.2605597758944955,
+        "yaw": 303.0320848724368
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.46737737984,
+        "y": 0.1449651665936808,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.42132144333825383,
+          "y": -0.2605597758944955,
+          "yaw": 303.0320848724368
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.46737737984,
+          "y": 0.1449651665936808,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_29.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5602538634705626,
+        "y": 0.18615903308234455,
+        "yaw": 191.94343071333606
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.5205773798400001,
+        "y": -0.1662219107917437,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5602538634705626,
+          "y": 0.18615903308234455,
+          "yaw": 191.94343071333606
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.5205773798400001,
+          "y": -0.1662219107917437,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_30.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.41033269575960307,
+        "y": 0.28101241065350874,
+        "yaw": 337.9976336970931
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.47147337984,
+        "y": 0.01664059859969136,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.41033269575960307,
+          "y": 0.28101241065350874,
+          "yaw": 337.9976336970931
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.47147337984,
+          "y": 0.01664059859969136,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_31.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.47641967855535344,
+        "y": 0.23635911146365973,
+        "yaw": 278.33755096656387
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.57467337984,
+        "y": -0.2990878352504555,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.47641967855535344,
+          "y": 0.23635911146365973,
+          "yaw": 278.33755096656387
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.57467337984,
+          "y": -0.2990878352504555,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_32.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5981137794850283,
+        "y": -0.18944572484649355,
+        "yaw": 277.45297844011657
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.42835337984,
+        "y": 0.10559285595916124,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5981137794850283,
+          "y": -0.18944572484649355,
+          "yaw": 277.45297844011657
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.42835337984,
+          "y": 0.10559285595916124,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_33.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4494450042826241,
+        "y": -0.1355267986825834,
+        "yaw": 62.479038388233676
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.66763337984,
+        "y": 0.2884553653505964,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4494450042826241,
+          "y": -0.1355267986825834,
+          "yaw": 62.479038388233676
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.66763337984,
+          "y": 0.2884553653505964,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_34.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6016791236701264,
+        "y": 0.1375832824632623,
+        "yaw": 253.8143742332977
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.43283337984,
+        "y": -0.08272761395409595,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6016791236701264,
+          "y": 0.1375832824632623,
+          "yaw": 253.8143742332977
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.43283337984,
+          "y": -0.08272761395409595,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_35.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5920569345368675,
+        "y": -0.17084822573080322,
+        "yaw": 91.2971486456263
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.43411337984,
+        "y": 0.15558944089188448,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5920569345368675,
+          "y": -0.17084822573080322,
+          "yaw": 91.2971486456263
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.43411337984,
+          "y": 0.15558944089188448,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_36.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5229864593844242,
+        "y": 0.11068410097394982,
+        "yaw": 347.5554332620359
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.47579337984000003,
+        "y": -0.15559763649354,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5229864593844242,
+          "y": 0.11068410097394982,
+          "yaw": 347.5554332620359
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.47579337984000003,
+          "y": -0.15559763649354,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_37.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5774000880820411,
+        "y": -0.28355891791369875,
+        "yaw": 339.3239219600782
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.62899337984,
+        "y": 0.24908305471607678,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5774000880820411,
+          "y": -0.28355891791369875,
+          "yaw": 339.3239219600782
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.62899337984,
+          "y": 0.24908305471607678,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_38.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5145285291570484,
+        "y": 0.21654852440743033,
+        "yaw": 235.58220657648872
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.43981257984,
+        "y": -0.12255443899709478,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5145285291570484,
+          "y": 0.21654852440743033,
+          "yaw": 235.58220657648872
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.43981257984,
+          "y": -0.12255443899709478,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_39.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.490120381706222,
+        "y": -0.24821993890339222,
+        "yaw": 14.46082795734128
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.44109257984,
+        "y": 0.11576261584888564,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.490120381706222,
+          "y": -0.24821993890339222,
+          "yaw": 14.46082795734128
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.44109257984,
+          "y": 0.11576261584888564,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_40.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.504191039965872,
+        "y": -0.010416689732041684,
+        "yaw": 211.94360236966986
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.44429257984,
+        "y": -0.2508790069910843,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.504191039965872,
+          "y": -0.010416689732041684,
+          "yaw": 211.94360236966986
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.44429257984,
+          "y": -0.2508790069910843,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_41.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6484258710688735,
+        "y": -0.29005157760009637,
+        "yaw": 100.85494821057
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.48597257984000003,
+        "y": -0.017103308609826118,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6484258710688735,
+          "y": -0.29005157760009637,
+          "yaw": 100.85494821057
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.48597257984000003,
+          "y": -0.017103308609826118,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_42.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5455034553559246,
+        "y": 0.03900654532266268,
+        "yaw": 99.9703756841227
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.63725257984,
+        "y": -0.21738129508615975,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5455034553559246,
+          "y": 0.03900654532266268,
+          "yaw": 99.9703756841227
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.63725257984,
+          "y": -0.21738129508615975,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_43.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.7035060747014492,
+        "y": -0.22900408222168311,
+        "yaw": 348.88172152502193
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.45045257984,
+        "y": 0.07639030521436607,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.7035060747014492,
+          "y": -0.22900408222168311,
+          "yaw": 348.88172152502193
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.45045257984,
+          "y": 0.07639030521436607,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_44.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.5443028834261272,
+        "y": -0.10199680414933479,
+        "yaw": 134.93592450877895
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.6417325798400001,
+        "y": 0.19925691268653328,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.5443028834261272,
+          "y": -0.10199680414933479,
+          "yaw": 134.93592450877895
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.6417325798400001,
+          "y": 0.19925691268653328,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_45.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6870857365183802,
+        "y": 0.1556514952109504,
+        "yaw": 325.243117318204
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.45493257984,
+        "y": -0.11193016469889114,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6870857365183802,
+          "y": 0.1556514952109504,
+          "yaw": 325.243117318204
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.45493257984,
+          "y": -0.11193016469889114,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_46.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.47840816632148453,
+        "y": -0.2275215764017471,
+        "yaw": 324.3585447917567
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.59622857984,
+        "y": 0.2927505265107257,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.47840816632148453,
+          "y": -0.2275215764017471,
+          "yaw": 324.3585447917567
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.59622857984,
+          "y": 0.2927505265107257,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_47.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.6333541910317424,
+        "y": 0.20123350419146968,
+        "yaw": 213.26989063265592
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.64750857984,
+        "y": -0.07343279430069427,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.6333541910317424,
+          "y": 0.20123350419146968,
+          "yaw": 213.26989063265592
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.64750857984,
+          "y": -0.07343279430069427,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_48.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.626268516272291,
+        "y": -0.25666092733442225,
+        "yaw": 50.75266504498359
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.6507085798400001,
+        "y": 0.15988460205201388,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.626268516272291,
+          "y": -0.25666092733442225,
+          "yaw": 50.75266504498359
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.6507085798400001,
+          "y": 0.15988460205201388,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
+      "scene": "pnp_229_metalfstylecan_a01_49.usda",
+      "catalog_index": 229,
+      "target": {
+        "name": "metalfstylecan_a01",
+        "usd_path": "assets/objects/vomp/metalfstylecan_a01/metalfstylecan_a01.usd",
+        "dims": [
+          0.10988772660493851,
+          0.1673414558172226,
+          0.25797603772603317
+        ],
+        "x": 0.4588846958155924,
+        "y": 0.1860958362468878,
+        "yaw": 307.0109496613941
+      },
+      "destination": {
+        "name": "grey_bin",
+        "x": 0.46198857983999997,
+        "y": -0.1513024753334106,
+        "yaw": 0.0
+      },
+      "predicates": [
+        {
+          "type": "place-on-base",
+          "object": "metalfstylecan_a01",
+          "x": 0.4588846958155924,
+          "y": 0.1860958362468878,
+          "yaw": 307.0109496613941
+        },
+        {
+          "type": "random-rot",
+          "object": "metalfstylecan_a01"
+        },
+        {
+          "type": "place-on-base",
+          "object": "grey_bin",
+          "x": 0.46198857983999997,
+          "y": -0.1513024753334106,
+          "yaw": 0.0
+        },
+        {
+          "type": "random-rot",
+          "object": "grey_bin"
+        }
+      ]
+    },
+    {
       "scene": "pnp_230_milkjug_a01_00.usda",
       "catalog_index": 230,
       "target": {
@@ -312834,5 +315134,13 @@
     "original_task_count": 7200,
     "excluded_task_count": 446,
     "retained_task_count": 6754
-  }
+  },
+  "restorations": [
+    {
+      "target": "metalfstylecan_a01",
+      "layout_count": 50,
+      "source_archive": "output/simple_pnp_cleanup_qhncc8ix",
+      "note": "User-requested restoration; original filtering provenance retained. Geometry, physics and grasp qualification are separate."
+    }
+  ]
 }

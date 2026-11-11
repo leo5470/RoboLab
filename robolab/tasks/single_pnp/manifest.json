@@ -1,7 +1,7 @@
 {
   "description": "One 50-second grasp-and-place task per simple-PnP scene",
   "scene_manifest": "assets/scenes/simple_pnp/manifest.json",
-  "task_count": 6754,
+  "task_count": 6804,
   "episode_length_s": 50,
   "success_condition": "object_resting_in_container: released, bin-supported and pose-stable for 0.5 seconds",
   "tasks": [
@@ -29750,6 +29750,406 @@
       "episode_length_s": 50
     },
     {
+      "task": "pnp_229_metalfstylecan_a01_00_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0100Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_00.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_01_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0101Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_01.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_02_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0102Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_02.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_03_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0103Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_03.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_04_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0104Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_04.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_05_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0105Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_05.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_06_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0106Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_06.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_07_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0107Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_07.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_08_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0108Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_08.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_09_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0109Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_09.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_10_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0110Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_10.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_11_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0111Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_11.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_12_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0112Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_12.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_13_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0113Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_13.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_14_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0114Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_14.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_15_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0115Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_15.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_16_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0116Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_16.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_17_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0117Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_17.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_18_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0118Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_18.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_19_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0119Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_19.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_20_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0120Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_20.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_21_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0121Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_21.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_22_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0122Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_22.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_23_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0123Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_23.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_24_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0124Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_24.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_25_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0125Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_25.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_26_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0126Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_26.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_27_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0127Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_27.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_28_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0128Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_28.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_29_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0129Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_29.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_30_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0130Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_30.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_31_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0131Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_31.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_32_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0132Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_32.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_33_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0133Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_33.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_34_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0134Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_34.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_35_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0135Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_35.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_36_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0136Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_36.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_37_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0137Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_37.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_38_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0138Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_38.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_39_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0139Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_39.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_40_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0140Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_40.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_41_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0141Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_41.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_42_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0142Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_42.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_43_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0143Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_43.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_44_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0144Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_44.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_45_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0145Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_45.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_46_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0146Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_46.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_47_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0147Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_47.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_48_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0148Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_48.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
+      "task": "pnp_229_metalfstylecan_a01_49_task.py",
+      "class_name": "SimplePnp229MetalfstylecanA0149Task",
+      "scene": "simple_pnp/pnp_229_metalfstylecan_a01_49.usda",
+      "target": "metalfstylecan_a01",
+      "destination": "grey_bin",
+      "episode_length_s": 50
+    },
+    {
       "task": "pnp_230_milkjug_a01_00_task.py",
       "class_name": "SimplePnp230MilkjugA0100Task",
       "scene": "simple_pnp/pnp_230_milkjug_a01_00.usda",
@@ -54054,5 +54454,13 @@
     "angular_threshold": 0.5,
     "position_tolerance": 0.001,
     "rotation_tolerance_deg": 0.5
-  }
+  },
+  "restorations": [
+    {
+      "target": "metalfstylecan_a01",
+      "layout_count": 50,
+      "source_archive": "output/simple_pnp_cleanup_qhncc8ix",
+      "note": "User-requested restoration; original filtering provenance retained. Geometry, physics and grasp qualification are separate."
+    }
+  ]
 }
