@@ -22,6 +22,7 @@ PLACEMENT_PARAMS = {
     "rotation_tolerance_deg": 0.5,
     "support_force_threshold": 0.01,
     "max_container_tilt_deg": 15.0,
+    "speed_source": "pose",
 }
 
 

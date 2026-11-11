@@ -27,6 +27,7 @@ class SimplePnp288WhitepackerbottleA0317Terminations:
             "angular_threshold": 0.5,
             "position_tolerance": 0.001,
             "rotation_tolerance_deg": 0.5,
+            "speed_source": "pose",
         },
     )
 
@@ -57,6 +58,7 @@ class SimplePnp288WhitepackerbottleA0317Task(Task):
                 "angular_threshold": 0.5,
                 "position_tolerance": 0.001,
                 "rotation_tolerance_deg": 0.5,
+                "speed_source": "pose",
             },
         )
     ]

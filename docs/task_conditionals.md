@@ -160,6 +160,7 @@ its pose stays within 1 mm and 0.4°. In pose mode the first observed step, and
 the step after a reset or observation gap, has no previous pose and does not
 count as stationary, so success comes one step later than in reported mode
 with an equally still object. The two modes keep separate settling timers.
+The Simple-PnP v1 (`single_pnp`) and v2 (`single_pnp_v2`) tasks use `"pose"`.
 
 Motion, loss of support/release/containment, excluded-surface contact, or a gap in
 observations restarts the interval. Episode resets clear it per environment.

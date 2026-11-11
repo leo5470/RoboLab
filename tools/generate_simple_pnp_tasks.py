@@ -21,7 +21,14 @@ RESTING_PARAMS = {
     "angular_threshold": 0.5,
     "position_tolerance": 0.001,
     "rotation_tolerance_deg": 0.5,
+    # PhysX reports 0.2-0.7 rad/s for resting multi-collider bodies (for example
+    # snickers_bar); compare speeds derived from consecutive observed poses.
+    "speed_source": "pose",
 }
+# Earlier generated parameter sets that --update-existing may migrate.
+PREVIOUS_RESTING_PARAMS = (
+    {key: value for key, value in RESTING_PARAMS.items() if key != "speed_source"},
+)
 SUCCESS_CONDITION = "object_resting_in_container: released, bin-supported and pose-stable for 0.5 seconds"
 
 
@@ -40,7 +47,8 @@ def class_name(scene_stem: str) -> str:
     return "Simple" + "".join(part.capitalize() for part in scene_stem.split("_")) + "Task"
 
 
-def task_source(scene_name: str, target_name: str, *, resting: bool = True) -> str:
+def task_source(scene_name: str, target_name: str, *, resting: bool = True,
+                resting_params: dict | None = None) -> str:
     scene_stem = Path(scene_name).stem
     task_class = class_name(scene_stem)
     termination_class = task_class.removesuffix("Task") + "Terminations"
@@ -48,7 +56,8 @@ def task_source(scene_name: str, target_name: str, *, resting: bool = True) -> s
     vague = "Put the item in the bin."
     specific = f"Grasp the {target_name} from the tabletop and release it inside the grey bin."
     conditional = "object_resting_in_container" if resting else "object_in_container"
-    placement_lines = "\n".join(f'            "{key}": {json.dumps(value)},' for key, value in RESTING_PARAMS.items())
+    placement_lines = "\n".join(f'            "{key}": {json.dumps(value)},'
+                                for key, value in (resting_params or RESTING_PARAMS).items())
     success_params = placement_lines if resting else '''            "tolerance": 0.01,
             "require_contact_with": True,
             "require_gripper_detached": True,'''
@@ -129,7 +138,9 @@ def main() -> None:
         for scene in scenes:
             scene_name, target = scene["scene"], scene["target"]["name"]
             path = OUT_DIR / f"{Path(scene_name).stem}_task.py"
-            if path.read_text() not in (task_source(scene_name, target, resting=False), task_source(scene_name, target)):
+            accepted = (task_source(scene_name, target, resting=False), task_source(scene_name, target),
+                        *(task_source(scene_name, target, resting_params=params) for params in PREVIOUS_RESTING_PARAMS))
+            if path.read_text() not in accepted:
                 raise ValueError(f"Task has custom edits; refusing to overwrite: {path}")
     elif OUT_DIR.exists() and any(OUT_DIR.iterdir()):
         raise FileExistsError(f"refusing to overwrite non-empty task directory: {OUT_DIR}")

@@ -18,10 +18,13 @@ FLAT_LAYOUT_SCENE_DIRS = {"simple_pnp": None, "simple_pnp_v2": 0.0}
 # (up to ~2x; see robolab.core.scenes.placement.prim_local_bounds). v1 keeps the
 # legacy, conservative bound so its collection behavior is unchanged.
 EXACT_BOUNDS_SCENE_DIRS = {"simple_pnp_v2"}
-# Libraries whose stability gate uses speeds derived from successive poses.
-# PhysX can keep reporting 0.01-0.03 m/s / 0.2-0.7 rad/s for resting bodies
-# whose poses change < 0.1 mm (Simple-PnP v2 pilot, 2026-11-02). v1 keeps the
-# reported velocities so its collection behavior is unchanged.
+# Libraries whose scene-preparation stability gate uses speeds derived from
+# successive poses. PhysX can keep reporting 0.01-0.03 m/s / 0.2-0.7 rad/s for
+# resting bodies whose poses change < 0.1 mm (Simple-PnP v2 pilot, 2026-11-02).
+# v1 preparation keeps reported velocities so its start gate is unchanged. This
+# gate is separate from the placement success check: both the v1 and v2 tasks
+# pass speed_source="pose" to object_resting_in_container, so v1 starts are
+# gated on reported speeds while v1 success is judged on pose-derived speeds.
 POSE_SPEED_SCENE_DIRS = {"simple_pnp_v2"}
 
 

@@ -391,12 +391,15 @@ def test_each_object_has_its_own_settling_window(runtime, logical, K, expected):
 
 
 def load_task_declaration(path, runtime):
-    classes = [node for node in ast.parse(path.read_text()).body if isinstance(node, ast.ClassDef)]
+    body = ast.parse(path.read_text()).body
+    classes = [node for node in body if isinstance(node, ast.ClassDef)]
     for node in classes:
         node.decorator_list = []
+    # Module-level constants such as v2's PLACEMENT_PARAMS.
+    statements = [node for node in body if isinstance(node, (ast.Assign, ast.ClassDef))]
     namespace = {**vars(runtime), "Task": type("Task", (), {}), "DoneTerm": NS,
                  "mdp": NS(time_out=lambda env: None), "import_scene": lambda *args: None}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=classes, type_ignores=[])), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=statements, type_ignores=[])), str(path), "exec"), namespace)
     task_cls = next(namespace[node.name] for node in classes
                     if any(isinstance(base, ast.Name) and base.id == "Task" for base in node.bases))
     return task_cls
@@ -420,6 +423,7 @@ def test_generated_task_success_and_subtask_use_identical_resting_parameters(run
     assert success_args.arguments == subtask_args.arguments
     assert success_args.arguments["settle_time_s"] == .5
     assert success_args.arguments["exclude_contact_with"] == "table"
+    assert success_args.arguments["speed_source"] == "pose"
 
 
 def test_generated_task_migration_preserves_filtering_and_refuses_custom_edits(tmp_path, monkeypatch):
@@ -490,7 +494,29 @@ def test_committed_single_pnp_definitions_use_matching_settled_success_and_credi
         assert success_args.arguments["container"] == row["destination"] == "grey_bin"
         for key, value in manifest["success_params"].items():
             assert success_args.arguments[key] == value, (row["task"], key)
+    assert manifest["success_params"]["speed_source"] == "pose"
 
+
+def test_committed_single_pnp_v2_definitions_use_matching_pose_speed_success_and_credit(runtime):
+    root = ROOT / "robolab/tasks/single_pnp_v2"
+    manifest = json.loads((root / "manifest.json").read_text())
+    params = manifest["placement_params"]
+    assert params["speed_source"] == "pose"
+    rows = manifest["tasks"]
+    assert {row["task"] for row in rows} == {path.name for path in root.glob("*_task.py")}
+    signature = inspect.signature(runtime.object_resting_in_container)
+    for row in rows:
+        task = load_task_declaration(root / row["task"], runtime)
+        termination = task.terminations.success
+        placement, _ = task.subtasks[0].conditions[row["target"]][-1]
+        assert termination.func is placement.func is runtime.object_resting_in_container
+        success_args = signature.bind(None, **termination.params)
+        subtask_args = signature.bind(None, **placement.keywords)
+        success_args.apply_defaults()
+        subtask_args.apply_defaults()
+        assert success_args.arguments == subtask_args.arguments, row["task"]
+        for key, value in params.items():
+            assert success_args.arguments[key] == value, (row["task"], key)
 
 
 #########################################################

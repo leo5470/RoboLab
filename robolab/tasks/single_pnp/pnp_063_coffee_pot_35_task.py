@@ -27,6 +27,7 @@ class SimplePnp063CoffeePot35Terminations:
             "angular_threshold": 0.5,
             "position_tolerance": 0.001,
             "rotation_tolerance_deg": 0.5,
+            "speed_source": "pose",
         },
     )
 
@@ -57,6 +58,7 @@ class SimplePnp063CoffeePot35Task(Task):
                 "angular_threshold": 0.5,
                 "position_tolerance": 0.001,
                 "rotation_tolerance_deg": 0.5,
+                "speed_source": "pose",
             },
         )
     ]
