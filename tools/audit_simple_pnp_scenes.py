@@ -20,7 +20,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from robolab.core.scenes.placement import flat_layout_issues, footprint_separation
+from robolab.core.scenes.placement import flat_layout_issues, footprint_separation, prim_local_bounds
 
 
 def world_corners(cache, prim):
@@ -28,12 +28,11 @@ def world_corners(cache, prim):
 
     if not prim:
         raise ValueError("Missing scene prim")
-    bounds = cache.ComputeUntransformedBound(prim).ComputeAlignedRange()
-    if bounds.IsEmpty():
-        raise ValueError(f"Missing geometry: {prim.GetPath()}")
+    # Exact local box from geometry points: BBoxCache.ComputeUntransformedBound
+    # inflates rotated prims in composed scenes (see prim_local_bounds).
+    lower, upper = prim_local_bounds(prim, purposes=tuple(cache.GetIncludedPurposes()))
     matrix = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-    return np.array([matrix.Transform(Gf.Vec3d(*point)) for point in
-                     product(*zip(bounds.GetMin(), bounds.GetMax()))])
+    return np.array([matrix.Transform(Gf.Vec3d(*point)) for point in product(*zip(lower, upper))])
 
 
 def audit_flat_scene(path, objects, *, support="table", pair_clearance=0.02, edge_clearance=0.01):

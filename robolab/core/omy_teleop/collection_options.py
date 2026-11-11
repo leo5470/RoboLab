@@ -13,10 +13,11 @@ CONTRACT_OPTIONS = (
     "gpu_max_num_partitions",
     "placement_checks", "finger_colliders", "task_checks", "cuda_connections", "physics_workers", "cpu_workers",
     "read_hz", "stale_s", "ready_tolerance_rad", "start_motion_rad", "ready_stable_s", "reference_observations",
-    "scene_settle_min_s", "scene_settle_stable_s", "scene_settle_timeout_s",
+    "skip_settle_checks", "scene_settle_min_s", "scene_settle_stable_s", "scene_settle_timeout_s",
     "scene_settle_linear_m_s", "scene_settle_angular_rad_s",
 )
-PRE_LATENCY_CONTRACT_OPTIONS = tuple(name for name in CONTRACT_OPTIONS if name not in (
+PRE_SETTLE_SKIP_CONTRACT_OPTIONS = tuple(name for name in CONTRACT_OPTIONS if name != "skip_settle_checks")
+PRE_LATENCY_CONTRACT_OPTIONS = tuple(name for name in PRE_SETTLE_SKIP_CONTRACT_OPTIONS if name not in (
     "task_checks", "cuda_connections", "physics_workers", "cpu_workers"))
 PRE_OPTIMIZATION_CONTRACT_OPTIONS = tuple(
     name for name in PRE_LATENCY_CONTRACT_OPTIONS if name not in ("placement_checks", "finger_colliders")
@@ -95,7 +96,7 @@ def configure_selection(parser, args):
             parser.error("--resume uses its session directory; omit --output-dir")
         plan, quota, metadata, current = LayoutSession.inspect(args.resume)
         saved_options = metadata.get("options")
-        recognized = (CONTRACT_OPTIONS, PRE_LATENCY_CONTRACT_OPTIONS,
+        recognized = (CONTRACT_OPTIONS, PRE_SETTLE_SKIP_CONTRACT_OPTIONS, PRE_LATENCY_CONTRACT_OPTIONS,
                       PRE_OPTIMIZATION_CONTRACT_OPTIONS, LEGACY_CONTRACT_OPTIONS)
         if not isinstance(saved_options, dict) or set(saved_options) not in tuple(set(names) for names in recognized):
             raise ValueError("Saved session is missing its complete collection/preparation configuration; start a new session")
@@ -103,7 +104,7 @@ def configure_selection(parser, args):
         explicit = getattr(args, "_explicit_options", set())
         # Preserve older sessions' exact contract and effective behavior.
         # New defaults apply only when creating a new session.
-        for name, value in {"gpu_max_num_partitions": 8, "placement_checks": "independent",
+        for name, value in {"skip_settle_checks": False, "gpu_max_num_partitions": 8, "placement_checks": "independent",
                             "finger_colliders": "original", "task_checks": "native",
                             "cuda_connections": 8, "physics_workers": 2, "cpu_workers": 8}.items():
             if name not in saved_options:

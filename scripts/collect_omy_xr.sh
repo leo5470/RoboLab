@@ -52,6 +52,8 @@ Run from the host desktop with SteamVR/ALVR running and the leader connected.
                     Package/render only successful attempts; raw failures are saved.
   --postprocess-preview-videos
                     Encode success clips and a combined review reel on CPU.
+  --skip-settle-checks
+                    Skip settle validation after minimum settling time; retain placement preflight.
   --scene-settle-min-s S / --scene-settle-stable-s S / --scene-settle-timeout-s S
                     Preparation durations in simulated seconds (0.5 / 0.3 / 5).
   --scene-settle-linear-m-s V / --scene-settle-angular-rad-s V
@@ -219,6 +221,7 @@ while (( $# )); do
     --log) log_console=true ;;
     --no-log) log_console=false ;;
     --no-postprocess|--postprocess-skip-failed|--postprocess-preview-videos) postprocess_args+=("$argument") ;;
+    --skip-settle-checks) preparation_args+=("$argument") ;;
     --scene-settle-min-s|--scene-settle-stable-s|--scene-settle-timeout-s|--scene-settle-linear-m-s|--scene-settle-angular-rad-s)
       require_value "$argument" "${2:-}"
       preparation_args+=("$argument" "$2")

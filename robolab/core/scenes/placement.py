@@ -41,6 +41,42 @@ def asset_local_bounds(path):
     return {"lower": list(bounds.GetMin()), "upper": list(bounds.GetMax()), "scale": list(scale)}
 
 
+def prim_local_bounds(prim, purposes=("default", "render", "proxy")):
+    """Exact AABB of a prim's descendant geometry in the prim's own frame.
+
+    Like ``BBoxCache.ComputeUntransformedBound`` (the prim's own transform is
+    excluded, descendant transforms are kept), but computed from geometry
+    points. In composed scenes ``ComputeUntransformedBound`` can return the
+    world-space box with the prim's inverse matrix, and ``ComputeAlignedRange``
+    then inflates it for any non-axis-aligned rotation (up to ~2x; see
+    ``robolab.core.task.predicate_logic._read_local_mesh_points``). Point-based
+    gprims use their points; other gprims (cubes, spheres, ...) use their extent.
+    """
+    from pxr import Usd, UsdGeom
+
+    inverse = np.array(UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default()).GetInverse())
+    lower, upper = np.full(3, np.inf), np.full(3, -np.inf)
+    for child in Usd.PrimRange(prim, Usd.TraverseInstanceProxies()):
+        if not child.IsA(UsdGeom.Gprim) or UsdGeom.Imageable(child).ComputePurpose() not in purposes:
+            continue
+        if child.IsA(UsdGeom.PointBased):
+            points = UsdGeom.PointBased(child).GetPointsAttr().Get()
+            if not points:
+                continue
+            points = np.asarray(points, dtype=float)
+        else:
+            extent = UsdGeom.Boundable.ComputeExtentFromPlugins(UsdGeom.Boundable(child), Usd.TimeCode.Default())
+            if extent is None:
+                continue
+            points = np.array(list(product(*zip(extent[0], extent[1]))), dtype=float)
+        matrix = np.array(UsdGeom.Xformable(child).ComputeLocalToWorldTransform(Usd.TimeCode.Default())) @ inverse
+        local = (np.c_[points, np.ones(len(points))] @ matrix)[:, :3]
+        lower, upper = np.minimum(lower, local.min(0)), np.maximum(upper, local.max(0))
+    if not np.isfinite(lower).all():
+        raise ValueError(f"Missing geometry: {prim.GetPath()}")
+    return lower, upper
+
+
 def _footprint(corners):
     """Convex XY envelope of transformed bounds, including tilted boxes."""
     points = sorted(set(map(tuple, np.asarray(corners, dtype=float)[:, :2])))

@@ -1,12 +1,13 @@
 """Unrecorded scene preparation, imported only after Isaac starts."""
 
-from pathlib import Path
+import os
 
 import torch
 
 from .options import ARM_JOINTS
-from .preparation import PreparationSettings, StabilityGate, supported_root_height
-from robolab.core.scenes.placement import bounds_corners, flat_layout_issues, tilt_change_deg
+from .preparation import (EXACT_BOUNDS_SCENE_DIRS, POSE_SPEED_SCENE_DIRS, PreparationSettings, StabilityGate, flat_layout_requirement,
+                          supported_root_height)
+from robolab.core.scenes.placement import bounds_corners, flat_layout_issues, prim_local_bounds, tilt_change_deg
 
 
 def configure_preparation(cfg, args):
@@ -28,7 +29,6 @@ class ScenePreparation:
 
         self.env = env
         self.settings = PreparationSettings.from_args(args)
-        self.gate = StabilityGate(self.settings)
         self.elapsed_s = 0.0
         self.world = get_world(env)
         self.placement = []
@@ -38,12 +38,15 @@ class ScenePreparation:
                                    device=env.device)
         self.names = list(env.scene.rigid_objects)
         path = getattr(getattr(getattr(env.cfg.scene, "scene", None), "spawn", None), "usd_path", "")
-        self.flat_table = Path(str(path)).parent.name == "simple_pnp" and "table" in self.names
-        self.setup_error = None
-        try:
-            self._correct_placement()
-        except (OSError, ValueError, KeyError, RuntimeError) as error:
-            self.setup_error = f"{type(error).__name__}: {error}"
+        self.flat_table, self.setup_error = flat_layout_requirement(path, self.names, self.settings.clearance_m)
+        folder = os.path.basename(os.path.dirname(str(path)))
+        self.exact_bounds = folder in EXACT_BOUNDS_SCENE_DIRS
+        self.gate = StabilityGate(self.settings, "pose" if folder in POSE_SPEED_SCENE_DIRS else "reported")
+        if self.setup_error is None:
+            try:
+                self._correct_placement()
+            except (OSError, ValueError, KeyError, RuntimeError) as error:
+                self.setup_error = f"{type(error).__name__}: {error}"
         self.started = env._sim_step_counter
 
     def _bounds(self, name):
@@ -56,12 +59,15 @@ class ScenePreparation:
             prim = self.world._get_prim(name, env_id=0)
             cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(),
                                      [UsdGeom.Tokens.default_, UsdGeom.Tokens.render, UsdGeom.Tokens.proxy])
-            bounds = cache.ComputeUntransformedBound(prim).ComputeAlignedRange()
-            if bounds.IsEmpty():
-                raise ValueError(f"Cannot prepare {name}: missing geometry bounds")
             transform = UsdGeom.Xformable(prim).GetLocalTransformation()
-            self.geometry[name] = (list(bounds.GetMin()), list(bounds.GetMax()),
-                                   list(Gf.Transform(transform).GetScale()))
+            if getattr(self, "exact_bounds", False):
+                lower, upper = prim_local_bounds(prim)
+            else:
+                bounds = cache.ComputeUntransformedBound(prim).ComputeAlignedRange()
+                if bounds.IsEmpty():
+                    raise ValueError(f"Cannot prepare {name}: missing geometry bounds")
+                lower, upper = bounds.GetMin(), bounds.GetMax()
+            self.geometry[name] = (list(lower), list(upper), list(Gf.Transform(transform).GetScale()))
         lower, upper, scale = self.geometry[name]
         pose = self.env.scene.rigid_objects[name].data.root_pose_w[0].detach().cpu().numpy()
         return bounds_corners(lower, upper, pose, scale)
@@ -121,32 +127,38 @@ class ScenePreparation:
             env.scene.update(dt=env.physics_dt)
         self.elapsed_s = (env._sim_step_counter - self.started) * env.physics_dt
         self.world.clear_contact_cache()
-        bodies = {}
-        for name in self.names:
-            asset = env.scene.rigid_objects[name]
-            force = env.scene.sensors["omy_prepare_" + name].data.net_forces_w[0].sum(dim=0)
-            supported = force[2].item() > self.settings.support_force_n
-            if self.flat_table and name != "table":
-                supported = supported and bool(self.world.is_supported_on_surface(
-                    name, "table", force_threshold=self.settings.support_force_n, env_id=0))
-            bodies[name] = {"pose": asset.data.root_pose_w[0].detach().cpu().numpy(),
-                            "velocity": asset.data.root_vel_w[0].detach().cpu().numpy(),
-                            "supported": supported}
-        report = self.gate.observe(self.elapsed_s, bodies)
-        if self.flat_table:
-            objects = {name: self._bounds(name) for name in self.names if name != "table"}
-            issues = self._layout_issues(objects, self._bounds("table"))
-            for name, initial in self.initial_orientations.items():
-                tilt = tilt_change_deg(initial, bodies[name]["pose"][3:])
-                report["bodies"][name]["tilt_change_deg"] = tilt
-                if tilt > self.settings.max_tilt_change_deg:
-                    issues.append(f"{name}: tipped {tilt:.1f} degrees during preparation")
-            if issues:
-                # Reject even if the object eventually rests on its side. Do not
-                # let another stable interval erase evidence of a bad setup.
-                self.setup_error = "; ".join(issues)
-                report.update(status="failed", reasons=report["reasons"] + issues)
-        report.update(settings=self.settings.metadata(), placement=self.placement)
+        if self.settings.skip_checks:
+            report = {"status": "ready" if self.elapsed_s + 1e-9 >= self.settings.min_s else "settling",
+                      "elapsed_s": self.elapsed_s, "stable_s": 0.0,
+                      "checks_skipped": True, "reasons": [], "bodies": {}}
+        else:
+            bodies = {}
+            for name in self.names:
+                asset = env.scene.rigid_objects[name]
+                force = env.scene.sensors["omy_prepare_" + name].data.net_forces_w[0].sum(dim=0)
+                supported = force[2].item() > self.settings.support_force_n
+                if self.flat_table and name != "table":
+                    supported = supported and bool(self.world.is_supported_on_surface(
+                        name, "table", force_threshold=self.settings.support_force_n, env_id=0))
+                bodies[name] = {"pose": asset.data.root_pose_w[0].detach().cpu().numpy(),
+                                "velocity": asset.data.root_vel_w[0].detach().cpu().numpy(),
+                                "supported": supported}
+            report = self.gate.observe(self.elapsed_s, bodies)
+            if self.flat_table:
+                objects = {name: self._bounds(name) for name in self.names if name != "table"}
+                issues = self._layout_issues(objects, self._bounds("table"))
+                for name, initial in self.initial_orientations.items():
+                    tilt = tilt_change_deg(initial, bodies[name]["pose"][3:])
+                    report["bodies"][name]["tilt_change_deg"] = tilt
+                    if tilt > self.settings.max_tilt_change_deg:
+                        issues.append(f"{name}: tipped {tilt:.1f} degrees during preparation")
+                if issues:
+                    # Reject even if the object eventually rests on its side. Do not
+                    # let another stable interval erase evidence of a bad setup.
+                    self.setup_error = "; ".join(issues)
+                    report.update(status="failed", reasons=report["reasons"] + issues)
+        report.update(settings=self.settings.metadata(), placement=self.placement,
+                      speed_source=getattr(self.gate, "speed_source", "reported"))
         if report["status"] == "ready":
             # Clear caches/timers and capture the prepared boundary, without a
             # scene reset that would restore the authored airborne poses.

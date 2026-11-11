@@ -97,10 +97,12 @@ The existing OMY `ScenePreparation` gate has shorter minimum/stable windows and
 supports the collection profile described in `docs/omy_xr_collection.md`. A
 `ready` report proves only its implemented checks, not the longer protocol above
 or grasp feasibility. Read the current code/profile before reusing its evidence.
-It also re-seats every object at a fixed 2 mm clearance (`PreparationSettings`,
-which rejects 0). Its height correction, layout preflight, and tilt rejection run
-only when the scene's parent directory is named exactly `simple_pnp`. A scene in
-any other directory silently skips them.
+It re-seats every object at `--scene-settle-clearance-m` (default 2 mm; 0 starts
+in contact). Its height correction, layout preflight, and tilt rejection run only
+when the scene's parent directory is listed in `FLAT_LAYOUT_SCENE_DIRS`
+(`robolab/core/omy_teleop/preparation.py`): currently `simple_pnp` and
+`simple_pnp_v2`, which requires clearance 0. A scene in any other directory
+silently skips them; add a new flat-table library there rather than nesting it.
 
 `assets/scenes/_utils/settle_scenes.py` can produce a settled candidate:
 

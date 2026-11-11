@@ -155,3 +155,115 @@ def test_runtime_refuses_tipped_pose_even_when_stability_gate_is_ready():
     assert any("tipped 90.0" in reason for reason in report["reasons"])
     env.reset_eval_state.assert_not_called()
     assert preparation.advance()["status"] == "failed"  # Cannot later settle into acceptance.
+
+
+def test_preparation_accepts_contact_clearance_and_rejects_negative():
+    from robolab.core.omy_teleop.preparation import PreparationSettings
+
+    assert PreparationSettings().clearance_m == 0.002  # v1 default unchanged
+    assert PreparationSettings(clearance_m=0.0).clearance_m == 0.0
+    for value in (-1e-6, math.nan, math.inf):
+        with pytest.raises(ValueError, match="clearance"):
+            PreparationSettings(clearance_m=value)
+    with pytest.raises(ValueError, match="positive"):
+        PreparationSettings(pair_clearance_m=0.0)
+
+
+def test_preparation_clearance_flag_reaches_settings():
+    import argparse
+    from robolab.core.omy_teleop.preparation import PreparationSettings, add_arguments
+
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    assert PreparationSettings.from_args(parser.parse_args([])).clearance_m == 0.002
+    args = parser.parse_args(["--scene-settle-clearance-m", "0"])
+    assert PreparationSettings.from_args(args).clearance_m == 0.0
+
+
+@pytest.mark.parametrize("scene, names, clearance, expected", [
+    # v1 behavior unchanged: any clearance; table-less scenes skip checks.
+    ("assets/scenes/simple_pnp/pnp_a.usda", ["table", "t", "grey_bin"], 0.002, (True, None)),
+    ("assets/scenes/simple_pnp/pnp_a.usda", ["table", "t", "grey_bin"], 0.0, (True, None)),
+    ("assets/scenes/simple_pnp/pnp_a.usda", ["t", "grey_bin"], 0.002, (False, None)),
+    # v2 runs the checks and requires contact starts.
+    ("assets/scenes/simple_pnp_v2/pnp_a.usda", ["table", "t", "grey_bin"], 0.0, (True, None)),
+    # Other libraries keep skipping flat-table preparation.
+    ("assets/scenes/generated/pail.usda", ["table", "t"], 0.002, (False, None)),
+    ("assets/scenes/simple_pnp_v2_drafts/pnp_a.usda", ["table", "t"], 0.0, (False, None)),
+    ("", [], 0.002, (False, None)),
+])
+def test_flat_layout_requirement(scene, names, clearance, expected):
+    from robolab.core.omy_teleop.preparation import flat_layout_requirement
+
+    assert flat_layout_requirement(scene, names, clearance) == expected
+
+
+def test_v2_flat_layout_fails_closed():
+    from robolab.core.omy_teleop.preparation import flat_layout_requirement
+
+    flat, error = flat_layout_requirement("assets/scenes/simple_pnp_v2/a.usda",
+                                          ["table", "t", "grey_bin"], 0.002)
+    assert flat and "--scene-settle-clearance-m 0" in error
+    flat, error = flat_layout_requirement("assets/scenes/simple_pnp_v2/a.usda", ["t", "grey_bin"], 0.0)
+    assert not flat and "no rigid 'table'" in error
+
+
+def test_runtime_reseats_v2_objects_in_contact():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+    import torch
+    from robolab.core.omy_teleop.preparation import PreparationSettings
+    from robolab.core.omy_teleop.preparation_runtime import ScenePreparation
+
+    preparation = ScenePreparation.__new__(ScenePreparation)
+    preparation.flat_table = True
+    preparation.settings = PreparationSettings(clearance_m=0.0)
+    preparation.placement, preparation.initial_orientations = [], {}
+    preparation.world = NS(clear_contact_cache=Mock())
+    preparation.names = ["table", "target"]
+    root = torch.tensor([[0.45, 0.0, 0.10, 1.0, 0.0, 0.0, 0.0]])
+    target = NS(data=NS(root_pose_w=root, root_vel_w=torch.zeros(1, 6)),
+                write_root_pose_to_sim=Mock(), write_root_velocity_to_sim=Mock())
+    preparation.env = NS(scene=NS(rigid_objects={"table": Mock(), "target": target},
+                                  write_data_to_sim=Mock(), update=Mock()), sim=Mock())
+    # Bottom-pivot offset: the transformed bottom sits 3 cm above the root.
+    points = {"table": TABLE, "target": box([.4, -.05, .13], [.5, .05, .2])}
+    preparation._bounds = points.__getitem__
+    preparation._correct_placement()
+    written = target.write_root_pose_to_sim.call_args.args[0]
+    assert written[0, 2].item() == pytest.approx(0.10 - 0.13)
+
+
+def test_rotation_angle_is_stable_near_zero():
+    from robolab.core.omy_teleop.preparation import rotation_angle
+
+    q = [1.0, 0.0, 0.0, 0.0]
+    for deg in (1e-4, 0.01, 1.0, 90.0, 179.0):
+        a = math.radians(deg) / 2
+        assert rotation_angle(q, [math.cos(a), 0.0, math.sin(a), 0.0]) == pytest.approx(math.radians(deg), rel=1e-6)
+    assert rotation_angle([0.5, 0.5, 0.5, 0.5], [-0.5, -0.5, -0.5, -0.5]) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pose_speed_gate_ignores_reported_velocity_on_resting_bodies():
+    from robolab.core.omy_teleop.preparation import PreparationSettings, StabilityGate
+
+    settings = PreparationSettings(min_s=0.2, stable_s=0.2, timeout_s=1.0)
+    still = {"target": {"pose": [0.5, 0, 0.02, 1, 0, 0, 0], "velocity": [0.03, 0, 0, 0, 0, 0.7], "supported": True}}
+    reported, pose = StabilityGate(settings), StabilityGate(settings, "pose")
+    for step in range(1, 8):
+        r = reported.observe(step / 15, still)
+        p = pose.observe(step / 15, still)
+    assert r["status"] == "settling" and "moving" in r["reasons"][0]
+    assert p["status"] == "ready"
+
+
+def test_pose_speed_gate_rejects_real_motion():
+    from robolab.core.omy_teleop.preparation import PreparationSettings, StabilityGate
+
+    gate = StabilityGate(PreparationSettings(min_s=0.2, stable_s=0.2, timeout_s=0.5), "pose")
+    first = gate.observe(1 / 15, {"o": {"pose": [0.5, 0, 0.02, 1, 0, 0, 0], "velocity": [0] * 6, "supported": True}})
+    assert "no pose history" in first["reasons"][0]
+    for step in range(2, 9):  # rolls 2 mm per step = 0.03 m/s while reporting zero velocity
+        out = gate.observe(step / 15, {"o": {"pose": [0.5 + 0.002 * step, 0, 0.02, 1, 0, 0, 0],
+                                             "velocity": [0] * 6, "supported": True}})
+    assert out["status"] == "failed" and "moving" in out["reasons"][0]

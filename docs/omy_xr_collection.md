@@ -97,6 +97,17 @@ All durations use simulated time. The XR display and keyboard continue updating.
 If preparation fails, recording stays unarmed; F9 retries preparation and F12
 can skip the layout in object mode. No manipulation attempt is exported or counted.
 
+Use `--skip-settle-checks` to advance to READY after `--scene-settle-min-s`
+(default 0.5 s) without checking support, speed, pose drift, or post-settle
+layout/tilt. Placement correction and its preflight checks still run. Reports
+mark `checks_skipped: true`; recorder initialization and READY confirmation
+still run normally. This option is saved in the resume contract, so changing
+it requires a new session.
+
+```bash
+scripts/collect_omy_xr.sh BananaInBowlTask --skip-settle-checks
+```
+
 After preparation, the collector refreshes the recorder's `initial_state` and
 first observations from the settled scene. Episode and success timers reset
 without resetting the poses. The simulation clock may already be nonzero;
