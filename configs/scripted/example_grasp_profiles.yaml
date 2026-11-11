@@ -1,0 +1,12 @@
+# Optional semantic knowledge. Geometry-derived profiles are used when no selector matches.
+profiles:
+  thin_rectangular_asset:
+    allowed_grasp_types: [edge, side]
+    preferred_local_axes: [short]
+    candidate_offsets:
+      - [0.0, 0.0, 0.0]
+    approach_distance: 0.12
+    grasp_depth: 0.015
+    score_biases:
+      edge: 2.0
+

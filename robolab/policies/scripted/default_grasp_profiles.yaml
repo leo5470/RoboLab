@@ -1,0 +1,36 @@
+profiles:
+  keyboard:
+    allowed_grasp_types: [edge, side]
+    preferred_local_axes: [short]
+    candidate_offsets:
+      - [0.0, 0.0, 0.0]
+    approach_distance: 0.12
+    # The fingertip pad is 38 mm long. Use only 12 mm of edge overlap so an
+    # open jaw does not sweep a loose thin object before closure.
+    grasp_depth: 0.012
+    score_biases:
+      edge: 2.0
+    geometry_class: thin_plate
+    # Exact graspable mesh frame in the rigid keyboard root. This is asset data:
+    # mesh X/Y/Z are physical length/thickness/width after composition.
+    geometry_position_object: [-0.031461, 0.036899, -0.012423]
+    geometry_quaternion_object: [0.703835, 0.703927, -0.074526, -0.059575]
+    dimensions_override: [0.429036, 0.020298, 0.128998]
+
+  banana:
+    allowed_grasp_types: [top]
+    preferred_local_axes: [short]
+    candidate_offsets:
+      - [-0.030, 0.0, 0.0]
+      - [0.030, 0.0, 0.0]
+      - [-0.025, -0.050, 0.0]
+      - [-0.025, 0.050, 0.0]
+      - [0.025, -0.050, 0.0]
+      - [0.025, 0.050, 0.0]
+    approach_distance: 0.10
+    # Reach below the banana crown so the fingertips straddle the curved body.
+    grasp_depth: 0.032
+    score_biases:
+      top: 2.0
+    geometry_class: curved_elongated
+    grasp_dimensions_override: [0.040, 0.178, 0.037]
