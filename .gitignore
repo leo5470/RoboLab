@@ -47,9 +47,23 @@ misc/paper/last_frames/
 *.code-workspace
 pyrightconfig.json
 
+# Generated task sets
+/assets/scenes/simple_pnp/
+/robolab/tasks/single_pnp/
+/robolab/tasks/_metadata/single_pnp/
+
 # Claude Code — local/runtime only
 .claude/settings.local.json
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 .claude/agents
 .claude/commands
+
+# Local tools and runtime artifacts
+/.cache/
+/.openpi/
+/.tools/
+/comp_check/
+/${data}/
+
+tests/
