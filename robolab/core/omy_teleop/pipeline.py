@@ -44,6 +44,7 @@ from robolab.core.omy_postprocess.io import sha256_file
 from robolab.core.omy_postprocess.validation import validate_recording
 from .dataset_paths import job_recording, source_names
 from .diversity import descriptor
+from . import grasp_groups
 from .final_dataset import choose, export, gather_candidates, parent_key, read_json
 from .quality import THRESHOLDS, assess
 
@@ -389,6 +390,7 @@ class SessionWork:
         self.folder = None          # generated/SESSION: generation jobs and recordings
         self.sources = []
         self.qualified, self.failed = set(), set()
+        self.validations = {}       # qualified parent -> its accepted qualification result
         self.pending_qualify = []
         self.rows = []              # gated, quality-passing candidates (humans and generated)
         self.rejected = []
@@ -580,6 +582,8 @@ class Pipeline:
             if result["stage"] == "validate" and result.get("implementation") == self.impl:
                 ok = bool(result["accepted"]) and not result["errors"]
                 (work.qualified if ok else work.failed).add(key)
+                if ok:
+                    work.validations[key] = result
             elif result["stage"] == "generate":
                 work.results[key].append(result)
         work.pending_qualify = [s for s in work.sources if source_key(s) not in work.qualified | work.failed]
@@ -591,6 +595,26 @@ class Pipeline:
                        f"single-source candidates; need {quota} human + {generated} generated")
         if not self.dry_run:
             self.status.session(work, status="qualifying", family=work.family, generation_mode="single_source")
+
+    def record_grasp_groups(self, work):
+        """Write ``STATE/SESSION/grasp_groups.json`` from the qualified humans' reproductions.
+
+        Mixed-parent generation reads it to restrict placement parents; it refuses
+        an ``ambiguous`` or ``unavailable`` record. Single-source runs never read it.
+        """
+        if self.dry_run or not work.qualified:
+            return
+        try:
+            recordings = {label(key): (job_recording(work.folder, work.validations[key]), work.validations[key]["accepted"][0])
+                          for key in sorted(work.qualified)}
+            record = grasp_groups.session_groups(recordings, work.family)
+        except (OSError, KeyError, ValueError) as error:
+            record = {"schema_version": 1, "object": work.family, "status": "unavailable", "reason": str(error),
+                      "groups": None}
+        record["implementation"] = self.impl
+        grasp_groups.write(self.roots["state"] / work.name / "grasp_groups.json", record)
+        if record["status"] != "grouped":
+            self.say(work, f"grasp groups {record['status']}: {record['reason']}")
 
     # ----- scheduling (all under self.cv) -----
 
@@ -721,6 +745,7 @@ class Pipeline:
                     return ("job", work, job)
                 if work.active:
                     continue
+                self.record_grasp_groups(work)
                 self.say(work, f"qualified {len(work.qualified)}/{len(work.sources)} humans"
                                + (f"; not qualified: {', '.join(label(k) for k in sorted(work.failed))}"
                                   if work.failed else ""))
@@ -779,6 +804,8 @@ class Pipeline:
         if job["stage"] == "validate":
             ok = bool(result["accepted"]) and not result["errors"]
             (work.qualified if ok else work.failed).add(key)
+            if ok:
+                work.validations[key] = result
         else:
             work.results[key].append(result)
             work.rows += rows
