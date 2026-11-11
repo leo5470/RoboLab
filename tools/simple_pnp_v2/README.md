@@ -28,6 +28,13 @@ visibility). Run everything from the repository root. Write outputs under
 | `visibility.py` | Isaac, a GPU | Step 4 visibility: depth copy of OverShoulderLeft, handle points projected from the simulated final pose; area-based rule (≥ 100 px², ≥ 0.5 × the entry's distance-normalised best case, class-A angle ≤ 60°). `--yaw-offsets` runs a reference sweep. Cameras cannot be re-created in one Kit app, so run **one task per process**. |
 | `visibility_reference.py` | — | Per-entry best-case visible area from `visibility.py` sweeps (input to the gate's `--reference`). |
 
+For headless PPS evaluation with `run_pinned.py`, append
+`--kit_args "--/app/runLoops/main/rateLimitEnabled=false"` to disable Kit's
+wall-clock render pacing. Physics and camera cadence in simulation time,
+sensor video, and the policy's action horizon are preserved. See
+[Faster Offline Evaluation](../../docs/environment_run.md#faster-offline-evaluation)
+for the explanation and measured replay speedup.
+
 Examples:
 
 ```bash

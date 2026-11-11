@@ -12,6 +12,26 @@ logger = logging.getLogger(__name__)
 
 
 class Pi0DroidJointposClient(InferenceClient):
+    # Standalone/interactive callers retain the historical visualization path.
+    _visualization_enabled = True
+
+    def set_visualization_enabled(self, enabled: bool) -> None:
+        """Skip unused image work when the episode runner is headless."""
+        self._visualization_enabled = bool(enabled)
+
+    def infer(self, obs, instruction: str, *, env_id: int = 0) -> dict:
+        if self._visualization_enabled:
+            return super().infer(obs, instruction, env_id=env_id)
+        # Cached actions do not consume observations. Keep request order,
+        # chunk postprocessing, and per-env counters identical to the base.
+        if self._needs_refresh(env_id):
+            extracted = self._extract_observation(obs, env_id=env_id)
+            request = self._pack_request(extracted, instruction)
+            response = self._query_server(request)
+            chunk = self._postprocess_chunk(self._unpack_response(response))
+            self._set_chunk(env_id, chunk)
+        return {"action": self._next_action(env_id), "viz": None}
+
     # Per-variant action horizons. One Pi0 server class serves multiple trained
     # variants; each has its own training-time action_horizon. Callers pass
     # ``policy_variant`` to select the right default, or override directly via
@@ -70,10 +90,22 @@ class Pi0DroidJointposClient(InferenceClient):
                     "[%s] Connection lost (%s), reconnecting (attempt %d/%d)...",
                     self.__class__.__name__, e, attempt + 1, max_retries,
                 )
+                self.close()
                 self.client = self._connect()
                 # Flush chunk cache so all envs re-request on next step
                 self._chunks.clear()
                 self._counters.clear()
+
+    def close(self) -> None:
+        """Release the OpenPI transport and its background threads."""
+        transport = self.client
+        if transport is None:
+            return
+        try:
+            transport._ws.close()
+        finally:
+            self.client = None
+            self.reset()
 
     # ---- required hooks -----------------------------------------------
 

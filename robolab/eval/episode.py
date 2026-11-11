@@ -68,6 +68,7 @@ def run_episode(
     save_videos=True,
     video_mode="all",
     enable_gt_state=False,
+    collect_subtask_history=False,
 ):
     """Run a policy-controlled episode across all parallel envs.
 
@@ -82,6 +83,8 @@ def run_episode(
         client: Constructed inference client. One connection shared across envs
             with per-env chunk state keyed by ``env_id``.
         headless: If True, don't display video
+        collect_subtask_history: Opt in to legacy per-step deep copies. Scoring
+            and event logs use the recorder directly and do not need them.
         save_videos: If True, save per-env episode videos
         video_mode: Which videos to save: 'all', 'viewport', 'sensor', or 'none'
         enable_gt_state: Attach per-env ground-truth sim state to the obs dict
@@ -91,7 +94,7 @@ def run_episode(
     Returns:
         tuple: (env_results, subtask_status, timing)
             env_results: per-env dicts with {env_id, success, step}
-            subtask_status: list of per-step subtask info dicts
+            subtask_status: per-step info copies if requested, otherwise empty
             timing: dict with wall-clock timing breakdown
     """
     timer = TimingStats()
@@ -112,6 +115,11 @@ def run_episode(
     subtask_status = []
 
     client.begin_episode(episode)
+    # Policy visualization is only consumed by the interactive cv2 window.
+    # Recorded videos use camera observations directly, including headless runs.
+    set_visualization = getattr(client, "set_visualization_enabled", None)
+    if callable(set_visualization):
+        set_visualization(not headless)
 
     # Set up per-run HDF5 file and per-env demo indices
     if env.recorder_manager is not None and hasattr(env.recorder_manager, 'set_hdf5_file'):
@@ -200,8 +208,9 @@ def run_episode(
             timer.stop("env_step")
 
             # Collect per-env subtask info (list of dicts, one per env)
-            per_env_infos = get_all_env_subtask_infos(env)
-            subtask_status.append(per_env_infos)
+            if collect_subtask_history:
+                per_env_infos = get_all_env_subtask_infos(env)
+                subtask_status.append(per_env_infos)
 
             # Write per-env video frames (skip frozen envs)
             if save_videos:
