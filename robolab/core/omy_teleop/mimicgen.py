@@ -77,6 +77,8 @@ def build_parser():
                              "avoids Isaac Sim 5.0 plugin-teardown crashes.")
     from .preparation import add_arguments
     add_arguments(parser)
+    from .repairs import add_arguments as add_repair_arguments
+    add_repair_arguments(parser)
     return parser
 
 
@@ -101,6 +103,11 @@ def validate_args(parser, args):
             parser.error("--target-manifest places the scene exactly; it requires --no-randomize")
         if not Path(args.target_manifest).is_file():
             parser.error(f"{args.target_manifest} does not exist")
+    from .repairs import settings_from_args
+    try:
+        args.repairs = settings_from_args(args)
+    except ValueError as error:
+        parser.error(str(error))
     if args.source_selection and args.episodes is not None:
         parser.error("Use either --source-selection or --episodes")
     if args.episodes and len(args.input) != 1:
@@ -169,7 +176,8 @@ def target_poses(manifest, target_id, required):
     return {name: [float(v) for v in pose] for name, pose in poses.items()}, rows[0]
 
 
-def execute_trial(generator, subtask_count, boundaries, seed, step, *, forced=None, later=None, per_subtask=False):
+def execute_trial(generator, subtask_count, boundaries, seed, step, *, forced=None, later=None, per_subtask=False,
+                  timing=None, interpolate=None):
     """Generate and execute one trial's subtask segments.
 
     ``forced`` fixes the first segment's source (None: the generator selects).
@@ -178,6 +186,9 @@ def execute_trial(generator, subtask_count, boundaries, seed, step, *, forced=No
     segment by ``later`` (None: the generator selects again); Isaac Lab then
     selects only because the config's per-subtask flag is also set.
     ``step(waypoint)`` executes one waypoint and returns whether the episode ended.
+    ``timing(start, target)``, if given, sets each connection's interpolation
+    steps from its 4x4 start and target poses; ``interpolate`` is Isaac Lab's
+    pose interpolation (see ``repairs.retime``).
 
     Returns the executed segments (subtask, source, realized boundary), the last
     executed waypoint, the step count and whether the episode ended.
@@ -187,12 +198,24 @@ def execute_trial(generator, subtask_count, boundaries, seed, step, *, forced=No
     for subtask in range(subtask_count):
         if per_subtask and subtask > 0:
             selected[EEF] = later
+        # The connection starts from the current hand pose, then from the previous segment's last target.
+        start = (generator.env.get_robot_eef_pose(env_ids=[0], eef_name=EEF)[0] if previous[EEF] is None
+                 else previous[EEF][-1].pose) if timing is not None else None
         with trajectory_rng(seed + subtask * 100000):
             previous[EEF] = generator.generate_trajectory(0, EEF, subtask, boundaries, {}, selected, previous)
         # Nearest-neighbor strategies can return scalar tensors rather than ints.
         source = int(selected[EEF])
-        segments.append({"subtask": subtask, "source": source,
-                         "boundary": [int(v) for v in boundaries[EEF][source, subtask]]})
+        segment = {"subtask": subtask, "source": source,
+                   "boundary": [int(v) for v in boundaries[EEF][source, subtask]]}
+        if timing is not None:
+            from .repairs import retime
+            fixed = generator.env_cfg.subtask_configs[EEF][subtask].num_interpolation_steps
+            target = previous[EEF][fixed].pose
+            chosen = timing(start, target)
+            previous[EEF] = retime(previous[EEF], start, fixed, chosen, interpolate)
+            segment.update(interpolation_steps=int(chosen), connection_m=round(float(
+                (target[:3, 3] - start[:3, 3]).norm()), 4))
+        segments.append(segment)
         for waypoint in previous[EEF]:
             steps += 1
             if step(waypoint):
@@ -260,6 +283,20 @@ def mimic_env_class():
             pose = robot.data.body_link_pose_w[:, self._mimic_body]
             return math_utils.subtract_frame_transforms(
                 robot.data.root_pos_w, robot.data.root_quat_w, pose[:, :3], pose[:, 3:7])
+
+        def get_object_poses(self, env_ids=None):
+            """Reference poses for generation; symmetric objects lose their heading (see repairs)."""
+            poses = super().get_object_poses(env_ids)
+            for name in getattr(self, "mimic_symmetric", ()):
+                rotation = poses[name][..., :3, :3]
+                yaw = torch.atan2(rotation[..., 1, 0], rotation[..., 0, 0])
+                c, s = torch.cos(-yaw), torch.sin(-yaw)
+                zero, one = torch.zeros_like(c), torch.ones_like(c)
+                turn = torch.stack((torch.stack((c, -s, zero), -1), torch.stack((s, c, zero), -1),
+                                    torch.stack((zero, zero, one), -1)), -2)
+                poses[name] = poses[name].clone()
+                poses[name][..., :3, :3] = turn @ rotation
+            return poses
 
         def get_robot_eef_pose(self, eef_name, env_ids=None):
             pos, quat = self._mimic_eef()
@@ -353,7 +390,7 @@ def pose_recorder_cfg():
     return RecorderTermCfg(class_type=MimicPoseRecorder)
 
 
-def load_sources(env, pool, references, object_name, container_name):
+def load_sources(env, pool, references, object_name, container_name, repairs=None, geometry=None):
     """Add the successful recorded episodes, or only ``episodes``, to the pool; return their provenance."""
     import asyncio
 
@@ -381,23 +418,39 @@ def load_sources(env, pool, references, object_name, container_name):
             tree = read_group_tree(group)
         arrays = source_arrays(tree, object_name, container_name)
         actions, joints = arrays["actions"], arrays["joint_position"]
+        raw_object = arrays["object_pose"][object_name]
+        if repairs is not None and repairs.symmetric_yaw:
+            from .repairs import remove_yaw
+            arrays["object_pose"][object_name] = np.c_[raw_object[:, :3], remove_yaw(raw_object[:, 3:7])]
         if not np.allclose(actions[:, locked], home, atol=1e-4):
             raise ValueError(f"{path}:{name} commands {LOCKED_JOINT}; six-axis IK cannot reproduce it")
         commanded = joints.copy()
         commanded[:, arm_ids] = actions[:, :len(ARM_JOINTS)]
         signal = torch.arange(len(actions), device=env.device) >= arrays["grasp"]
+        eef = env.fk(joints)
+        extra = {}
+        if repairs is not None and repairs.boundaries:
+            from .repairs import source_cuts
+            try:
+                # The pool's grasp segment ends one step after the signal rises.
+                extra["cuts"] = source_cuts(actions, eef[:, :3, 3].cpu().numpy(), raw_object,
+                                            arrays["object_pose"][container_name], arrays["grasp"] + 1,
+                                            geometry, repairs)
+            except ValueError as error:
+                raise ValueError(f"{path}:{name}: {error}") from None
         episode = EpisodeData()
         episode.data = {
             "actions": torch.as_tensor(actions, device=env.device),
             "obs": {"datagen_info": {
-                "eef_pose": {EEF: env.fk(joints)},
+                "eef_pose": {EEF: eef},
                 "target_eef_pose": {EEF: env.fk(commanded)},
                 "object_pose": {key: poses(value) for key, value in arrays["object_pose"].items()},
                 "subtask_term_signals": {GRASP_SIGNAL: signal},
             }},
         }
         asyncio.run(pool.add_episode(episode))
-        sources.append({**reference, "file": path, "episode": name, "steps": len(actions), "grasp": arrays["grasp"]})
+        sources.append({**reference, "file": path, "episode": name, "steps": len(actions), "grasp": arrays["grasp"],
+                        **extra})
     if not sources:
         raise ValueError("no successful source demonstrations were found")
     return sources
@@ -528,7 +581,15 @@ def run(args):
             recorder.set_hdf5_file("omy_demos")
             env.reset(seed=args.seed)
             pool = DataGenInfoPool(env, cfg, env.device)
-            sources = load_sources(env, pool, references, object_name, container_name)
+            repairs, geometry = args.repairs, None
+            if repairs.boundaries:
+                from .repairs import placement_geometry
+                from .target_sampler import scene_geometry
+                bounds = scene_geometry(cfg.scene.scene.spawn.usd_path, (object_name, container_name))
+                geometry = placement_geometry(bounds[object_name], bounds[container_name])
+            sources = load_sources(env, pool, references, object_name, container_name, repairs, geometry)
+            if repairs.symmetric_yaw:
+                env.mimic_symmetric = (object_name,)
             robot = env.scene["robot"]
             arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
             recorder.set_dataset_attrs({**source_attrs, "robolab_omy_mimicgen": json.dumps({
@@ -549,8 +610,23 @@ def run(args):
                 "action_noise": args.action_noise, "interpolation_s": args.interpolation_s,
                 "synthetic": True, "task_dirs": source_meta.get("task_dirs"),
                 "preparation": cfg.omy_preparation,
+                **({"repairs": {**repairs.metadata(), "geometry": geometry}} if repairs.active else {}),
             })})
             generator = DataGenerator(env=env, src_demo_datagen_info_pool=pool)
+            timing = interpolate = None
+            if repairs.connection_speed_m_s is not None:
+                import isaaclab.utils.math as math_utils
+
+                from .repairs import connection_steps
+                minimum = cfg.subtask_configs[EEF][0].num_interpolation_steps
+                hz = 1.0 / env.step_dt
+
+                def timing(start, target):
+                    return connection_steps(start.cpu().numpy(), target.cpu().numpy(), minimum,
+                                            repairs.connection_speed_m_s, repairs.connection_rate_rad_s, hz)
+
+                def interpolate(start, target, steps):
+                    return math_utils.interpolate_poses(pose_1=start, pose_2=target, num_steps=steps)[0]
             print(f"Task: {cfg.instruction}\nOutput: {output}\nSource demonstrations: {len(sources)}", flush=True)
             successes = 0
             settle_steps = round(args.settle_s / env.step_dt)
@@ -583,6 +659,10 @@ def run(args):
                 recorder.set_episode_preparation(prepared, env_ids=[0])
                 with trajectory_rng(args.selection_seed + trial_index):
                     boundaries = generator.randomize_subtask_boundaries()
+                if repairs.boundaries:
+                    from .repairs import edit_boundaries
+                    boundaries[EEF] = edit_boundaries(boundaries[EEF], pool.subtask_boundaries[EEF],
+                                                      [source["cuts"] for source in sources], repairs)
                 fixed_source = int(trial["source_index"]) if args.follow_source_schedule else args.fixed_source_index
                 placement_source = trial.get("placement_source_index")
                 if placement_source is not None:
@@ -600,7 +680,8 @@ def run(args):
 
                 segments, waypoint, steps, _ = execute_trial(
                     generator, len(cfg.subtask_configs[EEF]), boundaries, args.selection_seed + trial_index, execute,
-                    forced=fixed_source, later=placement_source, per_subtask=args.select_source_per_subtask)
+                    forced=fixed_source, later=placement_source, per_subtask=args.select_source_per_subtask,
+                    timing=timing, interpolate=interpolate)
                 lineage = trial_lineage(segments, sources)
                 # Recordings stop at success, leaving the release no margin; hold the final target.
                 for _ in range(settle_steps):
