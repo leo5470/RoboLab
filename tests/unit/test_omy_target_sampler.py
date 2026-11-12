@@ -84,3 +84,13 @@ def test_an_infeasible_profile_fails_with_counts():
         Sampler({**PROFILE, "object_xy": [[1, 0], [0, 0]]}, GEOMETRY)
     with pytest.raises(ValueError, match="No geometry"):
         Sampler(PROFILE, {k: v for k, v in GEOMETRY.items() if k != "table"})
+
+
+def test_band_profile_draws_object_x_by_band_weights():
+    banded = {**PROFILES["pail_v2_deployment_strata"], "object": "obj", "container": "bin", "relative_xy_m": [0.0, 10.0]}
+    banded["object_x_strata"] = {**banded["object_x_strata"], "weights": [1, 0, 0, 0, 3]}
+    targets, _ = Sampler(banded, GEOMETRY, pair_clearance=0.0, edge_clearance=0.0, exclude_m=0.0).sample(400, seed=1)
+    x = np.array([t["poses"]["obj"][0] for t in targets])
+    assert np.all((x <= 0.35) | (x >= 0.65)) and 0.65 < np.mean(x >= 0.65) < 0.85
+    with pytest.raises(ValueError, match="object_x_strata"):
+        Sampler({**banded, "object_x_strata": {"edges": [0.2, 0.5], "weights": [1]}}, GEOMETRY)

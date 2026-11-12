@@ -7,8 +7,9 @@ Simple-PnP v2 scene or tool is used for collection. A named range profile
 bounds where arrangements may fall; arrangements close to excluded layouts
 (development and final-test sets) are refused.
 
-Sampling is independent per target: object XY, container XY and object yaw are
-drawn uniformly from the profile, then screened. Every rejection is counted by
+Sampling is independent per target: object XY and container XY are drawn
+uniformly from the profile's box, except that a profile may give weighted
+bands for the object's x; object yaw is uniform. Each draw is then screened. Every rejection is counted by
 stage so a screen cannot silently narrow the distribution.
 
 The core is pure numpy; reading bounds from a scene needs ``pxr``
@@ -44,6 +45,23 @@ PROFILES = {
         "source": "authored simple_pnp_v2 pnp_242_plasticpail_a01_* (50 layouts), measured 2026-11-11",
     },
 }
+# The box alone puts the pail 7 cm farther from the robot on average than the
+# evaluation layouts (x mean 0.513 vs 0.441 m): v2 piles a third of its layouts
+# at x 0.29-0.35 m, near the box's edge. Reach screening does not remove the
+# difference, and Gaussian fits cannot reproduce the pile-up. This profile
+# draws the object's x from five 10 cm bands with weights calibrated so that
+# targets surviving the screens have v2's share per band; everything else is
+# as in the box profile. Five numbers, so no individual layout is targeted.
+PROFILES["pail_v2_deployment_strata"] = {
+    **PROFILES["pail_v2_deployment_box"],
+    "object_x_strata": {"edges": [0.287, 0.35, 0.45, 0.55, 0.65, 0.748],
+                        # Calibrated against v1 layout checks and the box's distance limits (6000 targets).
+                        "weights": [0.3037, 0.2457, 0.2348, 0.1125, 0.1033],
+                        "target_share": [0.34, 0.24, 0.22, 0.10, 0.10]},  # v2 counts 17/12/11/5/5
+    "source": "box of authored simple_pnp_v2 pnp_242_plasticpail_a01_* (50 layouts) with object-x band shares "
+              "calibrated 2026-11-12",
+}
+DEFAULT_PROFILE = "pail_v2_deployment_strata"
 PAIR_CLEARANCE_M = 0.02  # v1 PreparationSettings.pair_clearance_m
 EDGE_CLEARANCE_M = 0.01  # v1 PreparationSettings.edge_clearance_m
 EXCLUDE_M = 0.02         # joint-XY distance below which a target duplicates an excluded layout
@@ -72,6 +90,13 @@ def validate_profile(profile):
         lo, hi = np.asarray(profile[key], dtype=float)
         if lo.shape != (2,) or np.any(hi < lo):
             raise ValueError(f"Profile {key} must be [[xmin, ymin], [xmax, ymax]]")
+    strata = profile.get("object_x_strata")
+    if strata is not None:
+        edges, weights = np.asarray(strata["edges"], dtype=float), np.asarray(strata["weights"], dtype=float)
+        lo, hi = np.asarray(profile["object_xy"], dtype=float)[:, 0]
+        if (len(weights) != len(edges) - 1 or np.any(np.diff(edges) <= 0) or np.any(weights < 0)
+                or weights.sum() <= 0 or edges[0] < lo or edges[-1] > hi):
+            raise ValueError("Profile object_x_strata needs increasing edges inside object_xy and one weight per band")
     for key in ("object_yaw_deg", "container_yaw_deg", "relative_xy_m"):
         lo, hi = profile[key]
         if not lo <= hi:
@@ -115,7 +140,13 @@ class Sampler:
         for name, key, yaw_key in ((self.object, "object_xy", "object_yaw_deg"),
                                    (self.container, "container_xy", "container_yaw_deg")):
             lo, hi = np.asarray(p[key], dtype=float)
-            poses[name] = self.pose(name, rng.uniform(lo, hi), float(rng.uniform(*p[yaw_key])))
+            xy = rng.uniform(lo, hi)
+            strata = p.get("object_x_strata") if key == "object_xy" else None
+            if strata is not None:
+                edges, weights = np.asarray(strata["edges"], dtype=float), np.asarray(strata["weights"], dtype=float)
+                band = rng.choice(len(weights), p=weights / weights.sum())
+                xy[0] = rng.uniform(edges[band], edges[band + 1])
+            poses[name] = self.pose(name, xy, float(rng.uniform(*p[yaw_key])))
         return poses
 
     def screen(self, poses, accepted=()):
@@ -131,8 +162,8 @@ class Sampler:
             return "edge_clearance"
         if issues:
             return "pair_clearance"
-        if any(joint_xy_distance(poses, other, self.object, self.container) < self.exclude_m
-               for other in [*self.exclude, *accepted]):
+        if self.exclude_m > 0 and any(joint_xy_distance(poses, other, self.object, self.container) < self.exclude_m
+                                      for other in [*self.exclude, *accepted]):
             return "duplicate_or_excluded"
         return None
 
@@ -224,7 +255,7 @@ def build_manifest(profile_name, scenes, count, seed, exclude_paths=(), exclude_
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--profile", default="pail_v2_deployment_box", choices=sorted(PROFILES))
+    parser.add_argument("--profile", default=DEFAULT_PROFILE, choices=sorted(PROFILES))
     parser.add_argument("--scene", nargs="+", required=True, type=Path,
                         help="v1 scene(s) the targets will be generated in; asset sizes must agree")
     parser.add_argument("--count", type=int, required=True)
