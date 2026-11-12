@@ -29,6 +29,13 @@ Each repair is off by default; with all of them off, generation is unchanged.
   distant targets.) Pilot 2026-11-12, source 02 on five targets: neither
   fixed rule is uniformly better than the raw yaw (raw 7/10 accepted, bearing
   6/10, dropped heading 4/10), so the best heading is target-specific.
+  ``object_yaw_offset_deg`` therefore sets it per job instead: the source
+  reference heading is removed and the target's becomes this angle, so the
+  grasp segment turns by exactly this much about the object. GPU pilot
+  2026-11-12: headings ranked best by ``path_screen`` were accepted 4/10
+  against 7/10 for the recorded yaw (turning the grasp raises tracking error
+  on the simulated arm, e.g. 1.8 -> 5 cm on the source's own layout), so the
+  production profile keeps this repair off.
 
 Reference measurements on the pail sources (2026-11-12): every source has
 both cuts with ``lift_clearance_m=0.03`` and a 1 cm overhang; human hand
@@ -51,6 +58,7 @@ class RepairSettings:
     connection_speed_m_s: float | None = None
     connection_rate_rad_s: float = 0.5
     symmetric_yaw: bool = False
+    object_yaw_offset_deg: float | None = None
 
     def __post_init__(self):
         for name in ("approach_m", "lift_clearance_m", "connection_speed_m_s"):
@@ -61,6 +69,9 @@ class RepairSettings:
             raise ValueError("over_bin_overhang_m must be nonnegative")
         if not (math.isfinite(self.connection_rate_rad_s) and self.connection_rate_rad_s > 0):
             raise ValueError("connection_rate_rad_s must be positive")
+        if self.object_yaw_offset_deg is not None and not (
+                self.symmetric_yaw and math.isfinite(self.object_yaw_offset_deg)):
+            raise ValueError("object_yaw_offset_deg must be finite and requires symmetric_yaw")
         if self.over_bin and self.lift_clearance_m is None:
             raise ValueError("over_bin requires lift_clearance_m: the connection must start raised")
 
@@ -96,13 +107,17 @@ def add_arguments(parser):
                        help="With --connection-speed-m-s, also stay within this hand rotation rate")
     group.add_argument("--symmetric-object-yaw", action="store_true",
                        help="Treat the grasped object as symmetric about its vertical axis")
+    group.add_argument("--object-yaw-offset-deg", type=float,
+                       help="With --symmetric-object-yaw, turn the grasp by this angle about the object relative to "
+                            "the source (default: follow the change in bearing from the robot base)")
 
 
 def settings_from_args(args):
     return RepairSettings(approach_m=args.approach_m, lift_clearance_m=args.lift_clearance_m, over_bin=args.over_bin,
                           over_bin_overhang_m=args.over_bin_overhang_m,
                           connection_speed_m_s=args.connection_speed_m_s,
-                          connection_rate_rad_s=args.connection_rate_rad_s, symmetric_yaw=args.symmetric_object_yaw)
+                          connection_rate_rad_s=args.connection_rate_rad_s, symmetric_yaw=args.symmetric_object_yaw,
+                          object_yaw_offset_deg=args.object_yaw_offset_deg)
 
 
 def placement_geometry(object_bounds, container_bounds):
@@ -137,6 +152,17 @@ def remove_yaw(quats):
         # (c, 0, 0, s) * q
         out.append([c * w - s * z, c * x - s * y, c * y + s * x, c * z + s * w])
     return np.array(out).reshape(quats.shape)
+
+
+def heading_reference(poses, heading_deg):
+    """Root poses [.., 7] with the heading about world z set to ``heading_deg`` (tilt kept)."""
+    poses = np.array(poses, dtype=float, copy=True)
+    flat = poses.reshape(-1, 7)
+    c, s = math.cos(math.radians(heading_deg) / 2), math.sin(math.radians(heading_deg) / 2)
+    for row, q in zip(flat, remove_yaw(flat[:, 3:7]).reshape(-1, 4)):
+        w, x, y, z = q
+        row[3:7] = [c * w - s * z, c * x - s * y, c * y + s * x, c * z + s * w]
+    return flat.reshape(poses.shape)
 
 
 def bearing_reference(poses):

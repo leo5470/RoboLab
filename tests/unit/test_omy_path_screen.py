@@ -122,3 +122,28 @@ def test_manifest_screen_lists_reachable_sources(case):
     assert [r["reachable_sources"] for r in rows] == [["a"], []]
     assert counts == {"targets": 2, "targets_with_a_reachable_source": 1}
     assert screen(manifest, {"a": (path, "demo_0")}, arm, workers=2)[0] == rows
+
+
+def test_controller_emulation_and_repaired_screen(case):
+    from robolab.core.omy_teleop.path_screen import emulate_controller, repaired_screen
+    from robolab.core.omy_teleop.repairs import RepairSettings
+    arm, _, own, source = case
+    path = [source["hand"][t] for t in range(source["steps"])]
+    position, rotation, excess, _ = emulate_controller(arm, path, source["joints"][0])
+    assert position < 0.01 and excess <= 0.0
+    lagged = emulate_controller(arm, path, source["joints"][0], response=0.28)[0]
+    assert lagged >= position  # a lagging arm tracks no better
+    far = [pose.copy() for pose in path]
+    for pose in far:
+        pose[:3, 3] += [2.0, 0, 0]
+    assert emulate_controller(arm, far, source["joints"][0])[0] > 1.0
+    geometry = {"object_radius_m": 0.05, "rim_height_m": 0.01, "opening_center_m": [0, 0], "opening_half_m": [5, 5]}
+    settings = RepairSettings(connection_speed_m_s=0.25)
+    result = repaired_screen(arm, source, own, OBJECT, CONTAINER, geometry, settings)
+    (only,) = result["candidates"]
+    assert only["offset_deg"] is None and only["feasible"] and result["best"] is only
+    assert only["approach_m"] < 0.01 and only["carry_m"] < 0.05  # own layout: connections nearly vanish
+    turned = repaired_screen(arm, source, own, OBJECT, CONTAINER, geometry,
+                             RepairSettings(connection_speed_m_s=0.25, symmetric_yaw=True), [0.0, 90.0])
+    assert [c["offset_deg"] for c in turned["candidates"]] == [0.0, 90.0]
+    assert turned["candidates"][1]["approach_rad"] > turned["candidates"][0]["approach_rad"]

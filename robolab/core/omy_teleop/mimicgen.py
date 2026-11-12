@@ -8,6 +8,7 @@ teleoperation HDF5 contract. See docs/omy_mimicgen.md.
 
 import argparse
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -290,7 +291,9 @@ def mimic_env_class():
             for name in getattr(self, "mimic_symmetric", ()):
                 rotation = poses[name][..., :3, :3]
                 # The robot root is the unrotated environment origin, so bearings are taken about it.
-                bearing = torch.atan2(poses[name][..., 1, 3], poses[name][..., 0, 3])
+                heading = getattr(self, "mimic_heading_rad", None)
+                bearing = (torch.atan2(poses[name][..., 1, 3], poses[name][..., 0, 3]) if heading is None
+                           else torch.full_like(poses[name][..., 0, 3], heading))
                 yaw = torch.atan2(rotation[..., 1, 0], rotation[..., 0, 0]) - bearing
                 c, s = torch.cos(-yaw), torch.sin(-yaw)
                 zero, one = torch.zeros_like(c), torch.ones_like(c)
@@ -422,8 +425,10 @@ def load_sources(env, pool, references, object_name, container_name, repairs=Non
         actions, joints = arrays["actions"], arrays["joint_position"]
         raw_object = arrays["object_pose"][object_name]
         if repairs is not None and repairs.symmetric_yaw:
-            from .repairs import bearing_reference
-            arrays["object_pose"][object_name] = bearing_reference(raw_object)
+            from .repairs import bearing_reference, heading_reference
+            # With a fixed offset the source heading is removed; the target's becomes the offset.
+            arrays["object_pose"][object_name] = (bearing_reference(raw_object) if repairs.object_yaw_offset_deg is None
+                                                  else heading_reference(raw_object, 0.0))
         if not np.allclose(actions[:, locked], home, atol=1e-4):
             raise ValueError(f"{path}:{name} commands {LOCKED_JOINT}; six-axis IK cannot reproduce it")
         commanded = joints.copy()
@@ -592,6 +597,8 @@ def run(args):
             sources = load_sources(env, pool, references, object_name, container_name, repairs, geometry)
             if repairs.symmetric_yaw:
                 env.mimic_symmetric = (object_name,)
+                if repairs.object_yaw_offset_deg is not None:
+                    env.mimic_heading_rad = math.radians(repairs.object_yaw_offset_deg)
             robot = env.scene["robot"]
             arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
             recorder.set_dataset_attrs({**source_attrs, "robolab_omy_mimicgen": json.dumps({

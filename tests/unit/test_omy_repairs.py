@@ -146,3 +146,16 @@ def test_bearing_reference_sets_heading_to_the_bearing_and_keeps_tilt():
     w, x, y, z = _quat(math.pi / 2)
     assert np.allclose(out[0, 3:], [w * a0 - z * a3, w * a1 - z * a2, w * a2 + z * a1, w * a3 + z * a0])
     assert np.allclose(out[1, 3:], _quat(-math.pi / 4)) and np.allclose(out[:, :3], [pose[:3], [0.5, -0.5, 0]])
+
+
+def test_heading_reference_and_offset_setting():
+    from robolab.core.omy_teleop.repairs import heading_reference
+    tilt = [math.cos(0.1), math.sin(0.1), 0, 0]
+    out = heading_reference(np.array([[0.3, 0.2, 0, *tilt], [0.1, 0.1, 0, *_quat(1.0)]]), 30.0)
+    w, x, y, z = _quat(math.radians(30))
+    a0, a1, a2, a3 = tilt
+    assert np.allclose(out[0, 3:], [w * a0 - z * a3, w * a1 - z * a2, w * a2 + z * a1, w * a3 + z * a0])
+    assert np.allclose(out[1, 3:], _quat(math.radians(30)))
+    with pytest.raises(ValueError, match="requires symmetric_yaw"):
+        RepairSettings(object_yaw_offset_deg=30.0)
+    assert RepairSettings(symmetric_yaw=True, object_yaw_offset_deg=-45.0).metadata()["object_yaw_offset_deg"] == -45.0
