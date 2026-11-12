@@ -236,6 +236,9 @@ def gather_candidates(recordings, family, thresholds):
                                  "config_sha256": config_sha, "num_samples": ep["sample_count"],
                                  "quality": quality[name], "warnings": ep["warnings"], "blocks": blocks,
                                  "generation_source": generated_source,
+                                 # Explicit-target id, so selection can count distinct layouts.
+                                 "generation_target": ((generated_meta.get("target") or {}).get("id")
+                                                       if origin["kind"] == "generated" else None),
                                  # Recorded reset ranges, from which a scheduler can recover the tier.
                                  "generation_ranges": ({k: generated_meta.get(k) for k in ("pose_range", "object_pose_range")}
                                                        if origin["kind"] == "generated" else None),

@@ -364,6 +364,38 @@ def screen(manifest, sources, arm, stride=2, workers=1):
     return rows, {"targets": len(rows), "targets_with_a_reachable_source": sum(bool(r["reachable_sources"]) for r in rows)}
 
 
+def _rank_target(job):
+    arm, loaded, target, object_name, container_name, geometry, settings = job
+    rows = []
+    for key, source in loaded.items():
+        try:
+            candidate = repaired_screen(arm, source, target["poses"], object_name, container_name, geometry,
+                                        settings)["candidates"][0]
+        except ValueError as error:  # a source without the profile's cuts
+            candidate = {"feasible": False, "error": str(error)}
+        rows.append({"key": key, **candidate})
+    ranked = [row["key"] for row in sorted((r for r in rows if r["feasible"]), key=lambda r: (r["connection_s"], r["key"]))]
+    return {"id": target["id"], "ranked_sources": ranked, "sources": rows}
+
+
+def rank(manifest, sources, arm, profile, workers=1):
+    """Per target, sources whose repaired path passes the emulated controller, by connection time."""
+    from .repairs import placement_geometry, profile_settings
+
+    profile_ = manifest["sampler"]["profile"]
+    object_name, container_name = profile_["object"], profile_["container"]
+    geometry = placement_geometry(manifest["geometry"][object_name], manifest["geometry"][container_name])
+    settings = profile_settings(profile)
+    loaded = {key: load_source(path, episode, object_name, container_name, arm)
+              for key, (path, episode) in sorted(sources.items())}
+    jobs = [(arm, loaded, target, object_name, container_name, geometry, settings) for target in manifest["targets"]]
+    if workers > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(workers) as pool:
+            return list(pool.map(_rank_target, jobs))
+    return [_rank_target(job) for job in jobs]
+
+
 def _sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -375,6 +407,9 @@ def main(argv=None):
                         help='JSON {"sources": [{"file": omy_demos.hdf5 | "input": recording dir, "episode": "demo_N"}]}: '
                              "a --source-selection file or the pipeline's frozen sources.json")
     parser.add_argument("--stride", type=int, default=2, help="Check every Nth step, plus the segment ends")
+    parser.add_argument("--rank-profile",
+                        help="Instead of the plain reachability screen, rank sources per target along the path "
+                             "this generator profile (repairs.GENERATOR_PROFILES) produces")
     parser.add_argument("--workers", type=int, default=min(16, os.cpu_count() or 1))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -384,8 +419,19 @@ def main(argv=None):
     for row in references:
         file = Path(row["file"]) if row.get("file") else Path(row["input"]) / "omy_demos.hdf5"
         sources[f"{file.parent.parent.name}:{row['episode']}"] = (str(file), row["episode"])
-    rows, counts = screen(manifest, sources, Arm.from_usd(), args.stride, args.workers)
-    report = {"schema_version": SCHEMA_VERSION,
+    if args.output.exists():
+        parser.error(f"{args.output} exists; screen reports are frozen once written")
+    if args.rank_profile:
+        from .repairs import GENERATOR_PROFILES
+        rows = rank(manifest, sources, Arm.from_usd(), args.rank_profile, args.workers)
+        counts = {"targets": len(rows), "targets_with_a_feasible_source": sum(bool(r["ranked_sources"]) for r in rows)}
+        method = {"rank_profile": args.rank_profile, "profile_args": list(GENERATOR_PROFILES[args.rank_profile]),
+                  "controller": "emulate_controller (DLS lambda 0.01, step <= 0.5 rad, response 0.28)",
+                  "order": "feasible sources by total connection time at the timing limits"}
+    else:
+        rows, counts = screen(manifest, sources, Arm.from_usd(), args.stride, args.workers)
+        method = {}
+    report = {"schema_version": SCHEMA_VERSION, "method": method,
               "screen": {"module": "robolab.core.omy_teleop.path_screen", "sha256": _sha256(__file__),
                          "robot": ROBOT, "robot_sha256": _sha256(REPO / ROBOT), "locked_joint": ARM[LOCKED],
                          "position_m": POSITION_M, "rotation_rad": ROTATION_RAD, "stride": args.stride,

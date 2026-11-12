@@ -49,6 +49,25 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 
+# Named generator profiles: the repair flags every job of a pipeline run passes.
+# "p4" was chosen by the stage 3 pilot (2026-11-12, 7/10 accepted vs 3/10 without
+# repairs; evidence in output/omy_diversity_stage3_pilot_20261112). Changing a
+# profile's flags changes the pipeline's implementation identity.
+GENERATOR_PROFILES = {
+    "none": (),
+    "p4": ("--connection-speed-m-s", "0.25", "--lift-clearance-m", "0.03", "--over-bin",
+           "--approach-m", "0.10"),
+}
+
+
+def profile_settings(name):
+    """RepairSettings of a named generator profile, parsed as the generator would."""
+    import argparse
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    return settings_from_args(parser.parse_args(list(GENERATOR_PROFILES[name])))
+
+
 @dataclass(frozen=True)
 class RepairSettings:
     approach_m: float | None = None

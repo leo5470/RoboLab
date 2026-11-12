@@ -57,7 +57,8 @@ TIERS = {
              "yaw_range": math.radians(5)},
 }
 TIER_WEIGHTS = (("near", .5), ("moderate", .25), ("wide", .25))
-IMPLEMENTATION_FILES = ("robolab/core/omy_teleop/mimicgen.py", "robolab/core/omy_teleop/mimic_sources.py")
+IMPLEMENTATION_FILES = ("robolab/core/omy_teleop/mimicgen.py", "robolab/core/omy_teleop/mimic_sources.py",
+                        "robolab/core/omy_teleop/repairs.py", "robolab/core/omy_teleop/target_sampler.py")
 GENERATION_VERSION = "omy_dataset_pipeline_v1"
 POOL_METHOD = ("single source only; up to 10 eligible humans; generated fill balanced across qualified "
                "human parents, then layout-balanced farthest-first")
@@ -73,8 +74,18 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
-def implementation():
-    return {name: sha256_file(REPO / name) for name in IMPLEMENTATION_FILES}
+def implementation(profile="none"):
+    """Generator identity: source hashes, plus the generator profile when one is used."""
+    impl = {name: sha256_file(REPO / name) for name in IMPLEMENTATION_FILES}
+    if profile != "none":
+        from .repairs import GENERATOR_PROFILES
+        impl["generator_profile"] = {"name": profile, "args": list(GENERATOR_PROFILES[profile])}
+    return impl
+
+
+def implementation_tag(impl):
+    """Short stable tag of an implementation record, for job ids."""
+    return hashlib.sha256(json.dumps(impl, sort_keys=True).encode()).hexdigest()[:8]
 
 
 def allocate(total, weights):
@@ -134,6 +145,8 @@ def process_job(root, job, gpu, stop, thresholds=LIMITS):
     output = job_recording(root, job).parent
     if output.exists():
         raise RuntimeError(f"Unfinalized job output requires recovery: {output}")
+    if job.get("target_manifest") and job["stage"] != "generate":
+        raise ValueError("Explicit targets are generation jobs")
     command = [sys.executable, "-B", "-u", str(REPO / "examples/generate_omy_mimic.py"), "--worker-exit",
                "--host-gpu", str(gpu), "--input", job["input"], "--target-input", job["input"],
                "--target-episode", job["episode"].split("_")[-1], "--episodes", job["episode"].split("_")[-1],
@@ -141,11 +154,18 @@ def process_job(root, job, gpu, stop, thresholds=LIMITS):
                "--max-attempts", str(job["max_attempts"]), "--seed", str(job["seed"])]
     if job["stage"] == "validate":
         command += ["--no-randomize", "--keep-failed"]
+    elif job.get("target_manifest"):
+        command += ["--no-randomize", "--keep-failed", "--target-manifest", job["target_manifest"],
+                    "--target-id", job["target_id"]]
     else:
         command += ["--keep-failed"]
         for key, value in job["ranges"].items():
             command += ["--" + key.replace("_", "-"), str(value)]
-    impl = implementation()
+    profile = job.get("generator_profile", "none")
+    if profile != "none":
+        from .repairs import GENERATOR_PROFILES
+        command += list(GENERATOR_PROFILES[profile])
+    impl = implementation(profile)
     atomic_json(folder / "job.json", {**job, "gpu": gpu, "command": command, "implementation": impl})
     started = time.time()
     with (folder / "run.log").open("w") as log:
@@ -407,7 +427,7 @@ class SessionWork:
 class Pipeline:
     def __init__(self, roots, gpus, *, count=50, collected_count=None, max_attempts_per_source=150,
                  candidate_factor=1.5, dry_run=False, stop_after=None, replace_invalid=False, reverify=False,
-                 write_workers=WRITE_WORKERS, log=print):
+                 write_workers=WRITE_WORKERS, log=print, generator_profile="none"):
         if stop_after not in (None, *STOP_AFTER):
             raise ValueError(f"stop_after must be one of {STOP_AFTER}")
         self.roots, self.gpus = roots, gpus
@@ -422,9 +442,17 @@ class Pipeline:
         self.stop = threading.Event()
         self.running = 0
         self.work = []
-        self.impl = implementation()
+        from .repairs import GENERATOR_PROFILES
+        if generator_profile not in GENERATOR_PROFILES:
+            raise ValueError(f"Unknown generator profile {generator_profile!r}; choose from {sorted(GENERATOR_PROFILES)}")
+        self.generator_profile = generator_profile
+        self.impl = implementation(generator_profile)
 
     # ----- discovery and preparation (CPU, before any GPU work) -----
+
+    def profile_field(self):
+        """Job field naming the generator profile; absent for the default, so old job records stay equal."""
+        return {} if self.generator_profile == "none" else {"generator_profile": self.generator_profile}
 
     def say(self, work, message):
         self.log(f"{work.name}: {message}", flush=True)
@@ -566,8 +594,16 @@ class Pipeline:
         elif not self.dry_run:
             atomic_json(frozen, {"session": session, "family": work.family, "sources": work.sources})
         work.folder = self.roots["generated"] / session
+        marker = work.folder / "generator_profile.json"
+        recorded = read_json(marker)["name"] if marker.exists() else ("none" if (work.folder / "jobs").exists() else None)
+        if recorded not in (None, self.generator_profile):
+            self.fail(work, f"{work.folder} holds generator profile {recorded!r} candidates; use a new "
+                            f"--generated-root for profile {self.generator_profile!r}")
+            return
         if not self.dry_run:
             (work.folder / "jobs").mkdir(parents=True, exist_ok=True)
+            if recorded is None:
+                atomic_json(marker, {"name": self.generator_profile, "implementation": self.impl})
             if not (work.folder / "source_manifest.json").exists():
                 atomic_json(work.folder / "source_manifest.json", {"sources": work.sources})
             self.quarantine_unfinished(work)
@@ -718,7 +754,7 @@ class Pipeline:
                     "family": work.family, "task": source["task"], "input": source["input"],
                     "episode": source["episode"], "stage": "generate", "tier": tier, "num_demos": demos,
                     "max_attempts": min(remaining, max(24, 3 * demos)), "seed": 3_000_000 + index * 1000,
-                    "ranges": TIERS[tier],
+                    "ranges": TIERS[tier], **self.profile_field(),
                     "output_dir": str(Path(source["task"]) / f"{JOB_PREFIX}{index:05d}_{source['task']}_{tier}"
                                       / Path(source["input"]).name)}
         if work.active:
@@ -736,10 +772,13 @@ class Pipeline:
             if work.stage == "qualify":
                 if work.pending_qualify:
                     source = work.pending_qualify.pop(0)
-                    job_id = f"{JOB_PREFIX}q_{source['task']}_{source['episode']}_{self.impl[IMPLEMENTATION_FILES[0]][:8]}"
+                    tag = (self.impl[IMPLEMENTATION_FILES[0]][:8] if self.generator_profile == "none"
+                           else implementation_tag(self.impl))
+                    job_id = f"{JOB_PREFIX}q_{source['task']}_{source['episode']}_{tag}"
                     job = {"id": job_id, "index": -1, "family": work.family, "task": source["task"],
                            "input": source["input"], "episode": source["episode"], "stage": "validate",
                            "tier": "baseline", "num_demos": 1, "max_attempts": 2, "seed": 2_000_000, "ranges": {},
+                           **self.profile_field(),
                            "output_dir": str(Path(source["task"]) / job_id / Path(source["input"]).name)}
                     work.active[job["id"]] = job
                     return ("job", work, job)

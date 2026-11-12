@@ -253,20 +253,41 @@ def build_manifest(profile_name, scenes, count, seed, exclude_paths=(), exclude_
     }
 
 
+def layouts_manifest(scenes, names):
+    """Authored start poses of existing scenes as a target-style manifest (for exclusion and coincidence checks)."""
+    targets = []
+    for scene in sorted(str(s) for s in scenes):
+        geometry = scene_geometry(scene, names)
+        targets.append({"id": Path(scene).stem, "poses": {n: geometry[n]["pose"] for n in names},
+                        "scene": str(Path(scene).resolve()), "scene_sha256": _sha256(scene)})
+    return {"schema_version": SCHEMA_VERSION, "kind": "layouts", "names": list(names), "targets": targets}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--profile", default=DEFAULT_PROFILE, choices=sorted(PROFILES))
     parser.add_argument("--scene", nargs="+", required=True, type=Path,
                         help="v1 scene(s) the targets will be generated in; asset sizes must agree")
-    parser.add_argument("--count", type=int, required=True)
-    parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--count", type=int, help="Targets to sample (required unless --layouts-only)")
+    parser.add_argument("--seed", type=int, help="Sampling seed (required unless --layouts-only)")
     parser.add_argument("--exclude", nargs="*", default=[], type=Path,
                         help="Target manifests of layouts no target may duplicate (development, final test)")
     parser.add_argument("--exclude-m", type=float, default=EXCLUDE_M)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--layouts-only", action="store_true",
+                        help="Write the --scene files' authored object/container poses instead of sampling")
     args = parser.parse_args(argv)
+    if not args.layouts_only and (args.count is None or args.seed is None):
+        parser.error("--count and --seed are required to sample targets")
     if args.output.exists():
         parser.error(f"{args.output} exists; target manifests are frozen once written")
+    if args.layouts_only:
+        profile = PROFILES[args.profile]
+        manifest = layouts_manifest(args.scene, (profile["object"], profile["container"]))
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(manifest, indent=1) + "\n")
+        print(json.dumps({"output": str(args.output), "layouts": len(manifest["targets"])}))
+        return
     manifest = build_manifest(args.profile, args.scene, args.count, args.seed, args.exclude, args.exclude_m)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=1) + "\n")
