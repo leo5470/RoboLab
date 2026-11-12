@@ -13,6 +13,8 @@ Stages, each skipped when its frozen output exists:
    to the next one, until enough distinct targets are accepted.
 4. select: choose each arm's exact stratum counts (layout_arms.ARMS), drop
    candidates starting at an evaluation layout, publish ROOT/pools/{L,T}/SESSION.
+5. export: render each arm's training file (ROOT/training/ARM) and PPS file
+   (ROOT/pps/ARM), one arm per GPU, with separate caches (ROOT/cache/ARM).
 
 See docs/omy_mimicgen_diversity_plan_20261108.md. GPUs come from
 CUDA_VISIBLE_DEVICES (host GPU 0 when unset).
@@ -24,6 +26,8 @@ import glob
 import json
 import subprocess
 import sys
+import threading
+import traceback
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -36,7 +40,7 @@ from robolab.core.omy_teleop.pipeline import (LIMITS, Pipeline, atomic_json, imp
                                               verify_lineage, verify_pool)
 
 USD_PYTHON = REPO / "tools/simple_pnp_v2/usd_python.sh"
-STAGES = ("qualify", "local", "targets", "explicit", "select")
+STAGES = ("qualify", "local", "targets", "explicit", "select", "export")
 
 
 def usd_module(module, *args):
@@ -64,6 +68,34 @@ def freeze_targets(state, work, args):
         usd_module("robolab.core.omy_teleop.path_screen", "--manifest", targets, "--sources", qualified,
                    "--rank-profile", args.generator_profile, "--workers", args.screen_workers, "--output", ranking)
     return targets, read_json(layouts), read_json(ranking)
+
+
+def export_arm(arm, session, roots, root, gpu, errors):
+    """Training render and PPS export of one published arm pool, verified against the pool."""
+    from robolab.core.omy_postprocess import pps_hdf5
+    from robolab.core.omy_postprocess.automatic_dataset import process_one, verify_final
+    from robolab.core.omy_teleop.pipeline import freeze_training_plan, training_options
+
+    try:
+        arm_roots = {**roots, "pools": root / "pools" / arm, "training": root / "training" / arm,
+                     "cache": root / "cache" / arm, "pps": root / "pps" / arm}
+        pool = arm_roots["pools"] / session
+        manifest = verify_pool(pool, 50)
+        freeze_training_plan(manifest, arm_roots, 50, 10)
+        training = arm_roots["training"] / session
+        if not training.exists():
+            process_one(session, arm_roots["collected"], arm_roots["generated"], arm_roots["training"],
+                        arm_roots["cache"], count=50, collected_count=10, device=f"cuda:{gpu}")
+        final = verify_final(training, training_options(session, arm_roots, 50, 10))
+        if {r["fingerprint"] for r in final["episodes"]} != {r["fingerprint"] for r in manifest["episodes"]}:
+            raise ValueError(f"{arm}: training file does not match the published pool")
+        pps = arm_roots["pps"] / session
+        if not pps.exists():
+            pps_hdf5.export_session(pool, training, arm_roots["pps"])
+        pps_hdf5.verify_session(pps, pool, training)
+        print(f"{arm}: training and PPS files verified ({training}, {pps})", flush=True)
+    except Exception:
+        errors.append((arm, traceback.format_exc()))
 
 
 def main(argv=None):
@@ -94,7 +126,8 @@ def main(argv=None):
     print(f"GPU pool (host indices): {gpus}", flush=True)
 
     # 1-2: qualification and local candidates (L's 20/10/10 at factor 3; T's local share is a subset).
-    stop = "qualify" if args.stop_after == "qualify" else "generate"
+    # Targets are CPU-only and need only the qualified parents, so they may be frozen before local generation.
+    stop = "qualify" if args.stop_after in ("qualify", "targets") else "generate"
     pipeline = Pipeline(roots, gpus, count=50, collected_count=10, candidate_factor=3,
                         max_attempts_per_source=args.max_attempts_per_source, stop_after=stop,
                         generator_profile=args.generator_profile)
@@ -148,7 +181,21 @@ def main(argv=None):
         verify_lineage(output, verify_pool(output, 50), work.qualified)
         print(f"{arm}: published {output} {chosen['counts']}", flush=True)
     print(f"selection: {json.dumps({k: v for k, v in selection.items() if k != 'dropped'})}", flush=True)
-    return 0
+    if args.stop_after == "select":
+        return 0
+
+    errors = []
+    threads = [threading.Thread(target=export_arm, args=(arm, args.session, roots, root, gpus[i % len(gpus)], errors))
+               for i, arm in enumerate(layout_arms.ARMS)]
+    for i, thread in enumerate(threads):
+        thread.start()
+        if len(gpus) == 1:
+            thread.join()  # one GPU: arms in turn
+    for thread in threads:
+        thread.join()
+    for arm, error in errors:
+        print(f"{arm}: export failed\n{error}", flush=True)
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
