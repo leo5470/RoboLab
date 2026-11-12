@@ -19,9 +19,16 @@ Each repair is off by default; with all of them off, generation is unchanged.
   connection takes long enough to stay within these speeds, and never less
   than the configured fixed interpolation time.
 - Symmetric object yaw (``symmetric_yaw``): for an object that is rotationally
-  symmetric about its vertical axis, the yaw is removed from its reference
-  pose on both the source and the target side, so a grasp segment moves with
-  the object's position and tilt but keeps the source hand's heading.
+  symmetric about its vertical axis, its recorded heading carries no
+  information, so on both the source and the target side the reference pose's
+  heading is replaced by the object's bearing from the robot base (tilt kept).
+  A grasp segment then turns with the change in bearing, which roughly
+  preserves the arm's posture, instead of with an arbitrary object yaw that
+  can force large hand rotations while carrying. (Dropping the heading
+  entirely kept the source hand's heading, which the arm often cannot hold at
+  distant targets.) Pilot 2026-11-12, source 02 on five targets: neither
+  fixed rule is uniformly better than the raw yaw (raw 7/10 accepted, bearing
+  6/10, dropped heading 4/10), so the best heading is target-specific.
 
 Reference measurements on the pail sources (2026-11-12): every source has
 both cuts with ``lift_clearance_m=0.03`` and a 1 cm overhang; human hand
@@ -130,6 +137,19 @@ def remove_yaw(quats):
         # (c, 0, 0, s) * q
         out.append([c * w - s * z, c * x - s * y, c * y + s * x, c * z + s * w])
     return np.array(out).reshape(quats.shape)
+
+
+def bearing_reference(poses):
+    """Root poses [.., 7] with the heading set to the bearing of the position from the robot base (origin)."""
+    poses = np.array(poses, dtype=float, copy=True)
+    flat = poses.reshape(-1, 7)
+    tilt = remove_yaw(flat[:, 3:7])
+    for row, q in zip(flat, tilt):
+        bearing = math.atan2(row[1], row[0])
+        c, s = math.cos(bearing / 2), math.sin(bearing / 2)
+        w, x, y, z = q
+        row[3:7] = [c * w - s * z, c * x - s * y, c * y + s * x, c * z + s * w]
+    return flat.reshape(poses.shape)
 
 
 def source_cuts(actions, hand_xyz, object_pose, container_pose, grasp_end, geometry, settings):

@@ -134,3 +134,15 @@ def test_remove_yaw_keeps_tilt():
     turned = [w * a0 - z * a3, w * a1 - z * a2, w * a2 + z * a1, w * a3 + z * a0]  # yaw * tilt
     out = remove_yaw(np.array([turned, tilt]))
     assert np.allclose(out[0], tilt, atol=1e-9) and np.allclose(out[1], tilt)
+
+
+def test_bearing_reference_sets_heading_to_the_bearing_and_keeps_tilt():
+    from robolab.core.omy_teleop.repairs import bearing_reference
+    tilt = [math.cos(0.1), math.sin(0.1), 0, 0]
+    w, x, y, z = _quat(2.0)
+    a0, a1, a2, a3 = tilt
+    pose = [0.0, 0.5, 0.1, w * a0 - z * a3, w * a1 - z * a2, w * a2 + z * a1, w * a3 + z * a0]  # yaw 2.0, bearing 90 deg
+    out = bearing_reference(np.array([pose, [0.5, -0.5, 0, *_quat(0.3)]]))
+    w, x, y, z = _quat(math.pi / 2)
+    assert np.allclose(out[0, 3:], [w * a0 - z * a3, w * a1 - z * a2, w * a2 + z * a1, w * a3 + z * a0])
+    assert np.allclose(out[1, 3:], _quat(-math.pi / 4)) and np.allclose(out[:, :3], [pose[:3], [0.5, -0.5, 0]])

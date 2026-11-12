@@ -285,11 +285,13 @@ def mimic_env_class():
                 robot.data.root_pos_w, robot.data.root_quat_w, pose[:, :3], pose[:, 3:7])
 
         def get_object_poses(self, env_ids=None):
-            """Reference poses for generation; symmetric objects lose their heading (see repairs)."""
+            """Reference poses for generation; a symmetric object's heading becomes its bearing (see repairs)."""
             poses = super().get_object_poses(env_ids)
             for name in getattr(self, "mimic_symmetric", ()):
                 rotation = poses[name][..., :3, :3]
-                yaw = torch.atan2(rotation[..., 1, 0], rotation[..., 0, 0])
+                # The robot root is the unrotated environment origin, so bearings are taken about it.
+                bearing = torch.atan2(poses[name][..., 1, 3], poses[name][..., 0, 3])
+                yaw = torch.atan2(rotation[..., 1, 0], rotation[..., 0, 0]) - bearing
                 c, s = torch.cos(-yaw), torch.sin(-yaw)
                 zero, one = torch.zeros_like(c), torch.ones_like(c)
                 turn = torch.stack((torch.stack((c, -s, zero), -1), torch.stack((s, c, zero), -1),
@@ -420,8 +422,8 @@ def load_sources(env, pool, references, object_name, container_name, repairs=Non
         actions, joints = arrays["actions"], arrays["joint_position"]
         raw_object = arrays["object_pose"][object_name]
         if repairs is not None and repairs.symmetric_yaw:
-            from .repairs import remove_yaw
-            arrays["object_pose"][object_name] = np.c_[raw_object[:, :3], remove_yaw(raw_object[:, 3:7])]
+            from .repairs import bearing_reference
+            arrays["object_pose"][object_name] = bearing_reference(raw_object)
         if not np.allclose(actions[:, locked], home, atol=1e-4):
             raise ValueError(f"{path}:{name} commands {LOCKED_JOINT}; six-axis IK cannot reproduce it")
         commanded = joints.copy()
