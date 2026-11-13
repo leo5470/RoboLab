@@ -76,7 +76,7 @@ def stratum_of(row, job_tiers):
     return tier if tier in STRATA else tier_of(row.get("generation_ranges"))
 
 
-def choose_strata(rows, quotas, strata, *, distinct=None):
+def choose_strata(rows, quotas, strata, *, distinct=None, preselected=(), humans=None):
     """Select exactly ``quotas[stratum]`` rows per stratum.
 
     Humans (``collected``) are taken first; each generated stratum is then
@@ -84,6 +84,11 @@ def choose_strata(rows, quotas, strata, *, distinct=None):
     already selected, with its parents balanced as in ``final_dataset.choose``.
     ``distinct`` maps a stratum to a row key that may appear only once in it
     (explicit targets: one demonstration per layout).
+
+    ``preselected`` fingerprints are kept and count toward their strata, so a
+    larger selection can contain a smaller one. ``humans`` lists the
+    fingerprints to take for ``collected``, in order, instead of the first by
+    task and episode.
     """
     distinct = distinct or {}
     by = {s: [i for i, r in enumerate(rows) if strata[i] == s] for s in quotas}
@@ -98,16 +103,29 @@ def choose_strata(rows, quotas, strata, *, distinct=None):
         chosen.append(index)
         np.minimum(distances, np.linalg.norm(features - features[index], axis=1), out=distances)
 
+    index_of = {r["fingerprint"]: i for i, r in enumerate(rows)}
+    for fingerprint in preselected:
+        if fingerprint not in index_of or strata[index_of[fingerprint]] not in quotas:
+            raise ValueError(f"Preselected demonstration {fingerprint[:12]} is not among the candidates")
+        add(index_of[fingerprint])
     for s in ("collected", *[s for s in STRATA if s in quotas]):
         pool, n = by.get(s, []), quotas.get(s, 0)
+        taken = [i for i in chosen if strata[i] == s]
+        if len(taken) > n:
+            raise ValueError(f"Stratum {s!r}: {len(taken)} preselected exceed its quota of {n}")
         if s == "collected":
-            for index in sorted(pool, key=lambda i: (rows[i]["task"], rows[i]["episode"]))[:n]:
+            order = (sorted(pool, key=lambda i: (rows[i]["task"], rows[i]["episode"])) if humans is None
+                     else [index_of[f] for f in humans])
+            for index in [i for i in order if i not in chosen][:n - len(taken)]:
                 add(index)
+            if sum(strata[i] == s for i in chosen) != n:
+                raise ValueError(f"Stratum 'collected' needs {n}; the listed humans provide fewer")
             continue
         parents = {i: parent_key(rows[i]) for i in pool}
         cap = parent_cap(Counter(parents.values()), n) if n else 0
-        used, keys = Counter(), set()
-        for _ in range(n):
+        used = Counter(parents[i] for i in taken)
+        keys = {distinct[s](rows[i]) for i in taken} if s in distinct else set()
+        for _ in range(n - len(taken)):
             eligible = [i for i in pool if i not in chosen and used[parents[i]] < cap
                         and (s not in distinct or distinct[s](rows[i]) not in keys)]
             uncovered = [i for i in eligible if used[parents[i]] == 0]
