@@ -260,9 +260,9 @@ def main(argv=None):
     queue, errors, guard = list(chunk_names), [], threading.Lock()
 
     def worker(gpu):
-        while True:
+        while True:  # a failed chunk does not stop the others; the run still fails and assembles nothing
             with guard:
-                if not queue or errors:
+                if not queue:
                     return
                 name = queue.pop(0)
             try:
