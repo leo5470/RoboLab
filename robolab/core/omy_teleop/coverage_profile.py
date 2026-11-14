@@ -28,12 +28,66 @@ from pathlib import Path
 import numpy as np
 
 from .target_sampler import (EDGE_CLEARANCE_M, EXCLUDE_M, PAIR_CLEARANCE_M, SCHEMA_VERSION, Sampler, _sha256,
-                             common_geometry, layouts_manifest, quat_mul, validate_profile)
+                             common_geometry, layouts_manifest, quat_mul, scene_geometry, validate_profile)
 
 X_BAND_EDGES_M = (0.35, 0.45, 0.55, 0.65)  # interior band edges, as in the pail profile
 BAND_MARGIN_M = 0.03                       # an interior edge this close to the box limit is dropped
 FULL_CIRCLE_GAP_DEG = 60.0
 CALIBRATION_DRAWS = 6000
+
+
+def local_bounds(scene, names):
+    """Lower and upper corner of each ``/world/<name>`` prim's geometry, in the prim's own frame."""
+    from pxr import Gf, Usd, UsdGeom
+
+    stage = Usd.Stage.Open(str(scene))
+    purposes = [UsdGeom.Tokens.default_, UsdGeom.Tokens.render, UsdGeom.Tokens.proxy]
+    boxes, transforms, out = UsdGeom.BBoxCache(Usd.TimeCode.Default(), purposes), UsdGeom.XformCache(), {}
+    for name in names:
+        root, total = stage.GetPrimAtPath(f"/world/{name}"), Gf.Range3d()
+        if not root:
+            raise ValueError(f"{scene} has no /world/{name}")
+        for prim in Usd.PrimRange(root):
+            if prim.IsA(UsdGeom.Boundable) and UsdGeom.Imageable(prim).ComputePurpose() in purposes:
+                relative, _ = transforms.ComputeRelativeTransform(prim, root)
+                total.UnionWith(Gf.BBox3d(boxes.ComputeUntransformedBound(prim).ComputeAlignedRange(),
+                                          relative).ComputeAlignedRange())
+        if total.IsEmpty():
+            raise ValueError(f"{scene}: /world/{name} has no geometry")
+        out[name] = (list(total.GetMin()), list(total.GetMax()))
+    return out
+
+
+def consistent_geometry(scenes, names, atol=1e-6):
+    """``common_geometry`` that also takes assets whose legacy bounds follow the yaw authored in the scene.
+
+    For some assets (the YCB boxes, the wooden bowl) ``scene_geometry`` returns
+    bounds that grow with the scene's authored yaw, so they differ between
+    scenes and are no footprint. Where a prim's legacy bounds differ from its
+    geometry's bounds in its own frame (``local_bounds``) the latter are used;
+    elsewhere the two agree and this is ``common_geometry``. Returns the
+    geometry and the names whose bounds were replaced.
+    """
+    scenes = [str(scene) for scene in scenes]
+    geometries = [scene_geometry(scene, names) for scene in scenes]
+    local = [local_bounds(scene, names) for scene in scenes]
+    replaced = [name for name in names
+                if any(not np.allclose(np.r_[g[name]["lower"], g[name]["upper"]], np.r_[b[name][0], b[name][1]], atol=atol)
+                       for g, b in zip(geometries, local))]
+    if not replaced:
+        return common_geometry(scenes, names, atol), []
+    for geometry, bounds in zip(geometries, local):
+        for name in replaced:
+            geometry[name].update(lower=bounds[name][0], upper=bounds[name][1])
+    first = geometries[0]
+    for scene, other in zip(scenes[1:], geometries[1:]):  # the checks of common_geometry, on the replaced bounds
+        for name in names:
+            for key in ("lower", "upper", "scale") + (("pose",) if name == "table" else ()):
+                if not np.allclose(first[name][key], other[name][key], atol=atol):
+                    raise ValueError(f"{scene}: {name} {key} differs from {scenes[0]}")
+            if abs(first[name]["pose"][2] - other[name]["pose"][2]) > atol:
+                raise ValueError(f"{scene}: {name} authored height differs from {scenes[0]}")
+    return first, replaced
 
 
 def relative_yaw_deg(quat, base):
@@ -109,7 +163,7 @@ def derive_profile(object_name, container_name, layouts, geometry, *, draws=CALI
 def build_manifest(profile_name, profile, scenes, count, seed, exclude_paths=(), exclude_m=EXCLUDE_M):
     """``target_sampler.build_manifest`` for a profile given as data."""
     names = (profile["object"], profile["container"], "table")
-    geometry = common_geometry([str(s) for s in scenes], names)
+    geometry, replaced = consistent_geometry(scenes, names)
     exclude = [row for path in exclude_paths for row in json.loads(Path(path).read_text())["targets"]]
     targets, counts = Sampler(profile, geometry, exclude=exclude, exclude_m=exclude_m).sample(count, seed)
     from . import target_sampler
@@ -118,7 +172,8 @@ def build_manifest(profile_name, profile, scenes, count, seed, exclude_paths=(),
         "sampler": {"module": "robolab.core.omy_teleop.target_sampler", "sha256": _sha256(target_sampler.__file__),
                     "profile_module_sha256": _sha256(__file__), "profile_name": profile_name, "profile": profile,
                     "seed": seed, "count": count, "pair_clearance_m": PAIR_CLEARANCE_M,
-                    "edge_clearance_m": EDGE_CLEARANCE_M, "bounds": "legacy", "exclude_m": exclude_m},
+                    "edge_clearance_m": EDGE_CLEARANCE_M, "bounds": "legacy", "exclude_m": exclude_m,
+                    **({"local_bounds_for": replaced} if replaced else {})},
         "scenes": [{"path": str(Path(s).resolve()), "sha256": _sha256(s)} for s in scenes],
         "geometry": geometry,
         "excluded": [{"path": str(Path(p).resolve()), "sha256": _sha256(p)} for p in exclude_paths],
@@ -146,8 +201,10 @@ def main(argv=None):
         result = layouts_manifest(args.scene, (args.object, args.container))
         summary = {"layouts": len(result["targets"])}
     elif args.command == "profile":
-        geometry = common_geometry([str(s) for s in args.scene], (args.object, args.container, "table"))
+        geometry, replaced = consistent_geometry(args.scene, (args.object, args.container, "table"))
         result = derive_profile(args.object, args.container, json.loads(args.layouts.read_text())["targets"], geometry)
+        if replaced:
+            result["source"] += f"; local bounds for {', '.join(replaced)}"
         summary = {k: result[k] for k in ("object_xy", "object_yaw_deg", "object_x_strata")}
     else:
         profile = json.loads(args.profile_file.read_text())

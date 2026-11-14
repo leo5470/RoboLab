@@ -148,3 +148,31 @@ def test_yaw_arc_and_a_derived_profile():
     strata = profile["object_x_strata"]
     assert len(strata["weights"]) == len(strata["edges"]) - 1 == 5 and abs(sum(strata["weights"]) - 1) < 1e-3
     assert sum(strata["layout_counts"]) == 50 and strata["edges"][0] == profile["object_xy"][0][0]
+
+
+def test_bounds_that_follow_the_scene_yaw_are_replaced_by_local_bounds(monkeypatch):
+    def scene(lower, upper):
+        return {"obj": {"lower": lower, "upper": upper, "scale": [1, 1, 1], "pose": [0, 0, 0.1, 1, 0, 0, 0]},
+                "table": {"lower": [-1, -1, 0], "upper": [1, 1, 0], "scale": [1, 1, 1], "pose": [0, 0, 0, 1, 0, 0, 0]}}
+
+    legacy = {"a": scene([-0.05, -0.09, 0], [0.05, 0.09, 0.2]), "b": scene([-0.11, -0.11, 0], [0.11, 0.11, 0.2])}
+    local = {"obj": ([-0.04, -0.08, 0], [0.04, 0.08, 0.2]), "table": ([-1, -1, 0], [1, 1, 0])}
+    monkeypatch.setattr(coverage_profile, "scene_geometry", lambda path, names: json.loads(json.dumps(legacy[path])))
+    monkeypatch.setattr(coverage_profile, "local_bounds", lambda path, names: local)
+    geometry, replaced = coverage_profile.consistent_geometry(["a", "b"], ("obj", "table"))
+    assert replaced == ["obj"]
+    assert (geometry["obj"]["lower"], geometry["obj"]["upper"]) == local["obj"] and geometry["table"] == legacy["a"]["table"]
+
+    # Bounds that agree with the geometry's own are left to common_geometry, unchanged.
+    monkeypatch.setattr(coverage_profile, "scene_geometry", lambda path, names: json.loads(json.dumps(legacy["a"])))
+    monkeypatch.setattr(coverage_profile, "local_bounds",
+                        lambda path, names: {n: (legacy["a"][n]["lower"], legacy["a"][n]["upper"]) for n in names})
+    monkeypatch.setattr(coverage_profile, "common_geometry", lambda scenes, names, atol: "common")
+    assert coverage_profile.consistent_geometry(["a", "b"], ("obj", "table")) == ("common", [])
+
+    # Local bounds that still differ between scenes are refused.
+    monkeypatch.setattr(coverage_profile, "scene_geometry", lambda path, names: json.loads(json.dumps(legacy[path])))
+    monkeypatch.setattr(coverage_profile, "local_bounds", lambda path, names: {
+        "obj": ([-0.04, -0.08, 0], [0.04 if path == "a" else 0.06, 0.08, 0.2]), "table": local["table"]})
+    with pytest.raises(ValueError, match="obj upper differs"):
+        coverage_profile.consistent_geometry(["a", "b"], ("obj", "table"))
