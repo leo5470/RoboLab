@@ -115,7 +115,8 @@ class Session:
             return
         request = self.client._pack_request(self.client._extract_observation(self.obs), self.instruction)
         if buffer is not None:
-            buffer.add(request, action, self.ik.finger_position(), self.sim_time())
+            state, joint_names = sim.pre_action_state(self.env, (self.obj.name, sim.BIN))
+            buffer.add(request, action, self.ik.finger_position(), self.sim_time(), state, joint_names)
         if writer is not None:
             from robolab.core.observations.observation_utils import unpack_viewport_cams
 

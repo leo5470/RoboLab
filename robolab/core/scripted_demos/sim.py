@@ -197,6 +197,19 @@ def object_pose(world, name: str) -> np.ndarray:
     return frames.pose(pos.cpu().numpy(), quat.cpu().numpy())
 
 
+def pre_action_state(env, names) -> tuple[dict[str, np.ndarray], tuple[str, ...]]:
+    """The robot's joints and the named objects' root poses now, as Isaac Lab's recorder stores scene state (root pose
+    ``x y z qw qx qy qz`` relative to the env origin), and the robot's joint order."""
+    robot = env.scene["robot"]
+    state = {"articulation/robot/joint_position": robot.data.joint_pos[0].cpu().numpy()}
+    origin = env.scene.env_origins[0]
+    for name in names:
+        pose = env.scene[name].data.root_state_w[0, :7].clone()
+        pose[:3] -= origin
+        state[f"rigid_object/{name}/root_pose"] = pose.cpu().numpy()
+    return state, tuple(robot.joint_names)
+
+
 def write_pose(env, name: str, T_env: np.ndarray) -> None:
     """Teleport a rigid object to an env-local pose, at rest (as RoboLab's ``reset_pose_uniform`` does)."""
     import torch
