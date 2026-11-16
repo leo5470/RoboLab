@@ -75,3 +75,11 @@ state, so every episode of every env starts from the same place in both runs. Th
 the JAX server drew epsilon from its own rng, this one derives it from the trial indices. So the
 per-episode outcomes are not expected to match one for one; the task-level and pooled rates are
 what the comparison is about.
+
+## Proxy pairs on one object's v2 layouts
+
+`eval_proxy_pairs.py` runs the base policy and any number of trained pairs, at any number of
+gammas, over the 50 Simple-PnP v2 layouts of one object through a single server, and writes the
+layout-by-layout report with `analyse_proxy_pairs.py`. The procedure, the conditions under which
+two runs are comparable and how to read the report are in
+[`docs/pps_proxy_evaluation_howto.md`](../../docs/pps_proxy_evaluation_howto.md).
