@@ -47,7 +47,7 @@ A simulator process uses about 7 GB and runs at ~190 ms per rendered step; Kit's
 | `SCRIPTED_DEMOS_DIR` | `output/scripted_demos` | one directory per family: `pps.hdf5`, `attempts.jsonl`, `manifest.json`, `summary.json`, `videos/` |
 | `KIT_PORTABLE_ROOT` | `output/kit_portable` | Kit's data, cache and logs (otherwise Kit writes into the venv, and a shared shader cache recompiles on every start) |
 | `DEMO_VIEWER_CACHE` | `output/demo_viewer_cache` | encoded viewer videos |
-| `GRASPDATAGEN_DIR` | none | GraspDataGen checkout at `8e09005`; needed by `run_graspdatagen.sh`, `export_robot_geometry.py`, `build_library.py` |
+| `GRASPDATAGEN_DIR` | `third_party/GraspDataGen` | GraspDataGen checkout at `8e09005` (the submodule: `git submodule update --init third_party/GraspDataGen`); needed by `run_graspdatagen.sh`, `export_robot_geometry.py`, `build_library.py` |
 | `PPS_REPO`, `PPS_PYTHON` | none, `$PPS_REPO/.venv/bin/python` | pps checkout for `validate_pps.sh`; `collect_demos.py` skips validation without it |
 
 Every long run resumes from its JSONL and HDF5 outputs.
