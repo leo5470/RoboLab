@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Phase 2 step 1: GraspDataGen grasps for the batch objects (robotiq_2f_85).
 #
-#   GRASPDATAGEN_DIR=<checkout> CUDA_VISIBLE_DEVICES=N scripts/scripted_demos/grasps/run_graspdatagen.sh [INDEX ...]
-#   (default: all seven batch objects; ROBOLAB_VENV defaults to this checkout's .venv)
+#   CUDA_VISIBLE_DEVICES=N scripts/scripted_demos/grasps/run_graspdatagen.sh [INDEX ...]
+#   (default: all seven batch objects; ROBOLAB_VENV defaults to this checkout's .venv; GRASPDATAGEN_DIR to the
+#   third_party/GraspDataGen submodule)
 #
 # Per object: one grasp_guess run, then two grasp_sim runs on the same guesses: with force_magnitude equal to the
 # object's simulated mass in kg (GraspDataGen's force_magnitude is in g on its 1 kg test body, grasp_sim.py:1015-1018,
@@ -16,7 +17,9 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 VENV=${ROBOLAB_VENV:-$REPO/.venv}
 DATA=${GRASP_DATA_DIR:-$REPO/output/grasp_data}
-GDG=${GRASPDATAGEN_DIR:?set GRASPDATAGEN_DIR to a GraspDataGen checkout (commit 8e09005)}
+GDG=${GRASPDATAGEN_DIR:-$REPO/third_party/GraspDataGen}
+[ -d "$GDG/scripts/graspgen" ] || { echo "run_graspdatagen.sh: no GraspDataGen checkout at $GDG; run" \
+    "git submodule update --init third_party/GraspDataGen or set GRASPDATAGEN_DIR" >&2; exit 2; }
 SEED=${SEED:-20261107}
 OVERWRITE=${OVERWRITE:-0}
 

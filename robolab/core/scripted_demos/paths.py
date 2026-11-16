@@ -35,8 +35,10 @@ def demo_viewer_cache() -> pathlib.Path:
 
 
 def graspdatagen_dir() -> pathlib.Path:
-    """A GraspDataGen checkout (NVlabs/GraspDataGen, see ``objects.GRASPDATAGEN_COMMIT``); only the grasp tools need it."""
-    value = os.environ.get("GRASPDATAGEN_DIR")
-    if not value:
-        raise RuntimeError("set GRASPDATAGEN_DIR to a GraspDataGen checkout (see docs/scripted_demos.md)")
-    return pathlib.Path(value)
+    """The GraspDataGen checkout; only the grasp tools need it. Default: the ``third_party/GraspDataGen`` submodule,
+    pinned at ``objects.GRASPDATAGEN_COMMIT`` (``git submodule update --init third_party/GraspDataGen``)."""
+    path = _location("GRASPDATAGEN_DIR", ROBOLAB_DIR / "third_party" / "GraspDataGen")
+    if not (path / "scripts" / "graspgen").is_dir():
+        raise RuntimeError(f"no GraspDataGen checkout at {path}: run `git submodule update --init third_party/GraspDataGen` "
+                           f"or set GRASPDATAGEN_DIR (see docs/scripted_demos.md)")
+    return path
