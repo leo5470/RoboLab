@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scripted Demo Viewer</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #fcfcfb;
+  --surface-2: #efeeea;
+  --border: #e0dfda;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #76756f;
+  --accent: #2a78d6;
+  --s1: #2a78d6;          /* measured state */
+  --s2: #eb6834;          /* commanded target */
+  --band: rgba(0, 0, 0, 0.045);
+  --cursor: rgba(0, 0, 0, 0.55);
+  --good: #0ca30c;
+  --unsure: #fab219;
+  --bad: #d03b3b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #121211;
+    --surface: #1a1a19;
+    --surface-2: #242422;
+    --border: #34342f;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --muted: #918f87;
+    --accent: #3987e5;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --band: rgba(255, 255, 255, 0.05);
+    --cursor: rgba(255, 255, 255, 0.6);
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: 20px; margin: 4px 0 2px; font-weight: 650; letter-spacing: -0.01em; }
+h2 { font-size: 13px; margin: 0 0 8px; font-weight: 650; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; }
+kbd {
+  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px;
+  padding: 2px 5px; background: var(--surface-2); color: var(--text-2);
+}
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.num { text-align: right; }
+
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+#crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; }
+#crumbs .sep { color: var(--muted); }
+#crumbs .here { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+main { max-width: 1680px; margin: 0 auto; padding: 16px 24px 48px; }
+@media (max-width: 640px) { main, header.top { padding-left: 16px; padding-right: 16px; } }
+
+button, select, textarea {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+button { padding: 5px 10px; cursor: pointer; }
+button:hover:not(:disabled) { background: var(--surface-2); }
+button:disabled { opacity: 0.45; cursor: default; }
+select { padding: 4px 6px; }
+textarea { width: 100%; padding: 6px 8px; resize: vertical; }
+
+.error { background: var(--surface); border: 1px solid var(--bad); border-radius: 8px; padding: 12px 14px; }
+
+/* overview */
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { font-size: 12px; font-weight: 600; color: var(--text-2); background: var(--surface-2); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+tr.link { cursor: pointer; }
+tr.link:hover td { background: var(--surface-2); }
+.fam { font-weight: 600; }
+.chip { display: inline-block; margin: 0 4px 3px 0; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-size: 12px; color: var(--text-2); white-space: nowrap; }
+
+/* status pills: a colored dot carries the color, the text stays in text ink */
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px 1px 6px; border-radius: 999px; font-size: 12px; background: var(--surface); border: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.good::before { background: var(--good); }
+.pill.bad::before { background: var(--bad); }
+.pill.unsure::before { background: var(--unsure); }
+
+/* family grid */
+.fam-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 14px 0 12px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.ctl { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13px; }
+.toolbar .count { margin-left: auto; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(var(--tile, 330px), 1fr)); }
+.grid.size-s { --tile: 230px; }
+.grid.size-m { --tile: 330px; }
+.grid.size-l { --tile: 480px; }
+.grid.size-s .tmeta2 { display: none; }
+.tile { display: block; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); border-top: 3px solid transparent; }
+.tile:hover { text-decoration: none; border-color: var(--accent); }
+.tile.good { border-top-color: var(--good); }
+.tile.bad { border-top-color: var(--bad); }
+.tile.unsure { border-top-color: var(--unsure); }
+.tile.last { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vid { position: relative; aspect-ratio: 2 / 1; background: #000; }
+.vid video { width: 100%; height: 100%; display: block; object-fit: contain; }
+.vid .tstatus { position: absolute; inset: 0; display: grid; place-items: center; color: #bbb; font-size: 12px; pointer-events: none; }
+.vid .corner { position: absolute; top: 6px; display: flex; gap: 4px; }
+.vid .corner.l { left: 6px; }
+.vid .corner.r { right: 6px; }
+.tag { font-size: 11px; padding: 0 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.6); color: #fff; line-height: 18px; }
+.vid .pill { background: rgba(0, 0, 0, 0.6); color: #fff; border-color: transparent; }
+.tmeta { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px 0; font-size: 13px; }
+.tmeta .right { margin-left: auto; color: var(--text-2); }
+.tmeta2 { padding: 2px 10px 8px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grid.size-s .tmeta { padding-bottom: 7px; }
+details.fails { margin-top: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+details.fails summary { cursor: pointer; padding: 10px 14px; font-weight: 600; }
+details.fails .table-wrap { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; box-shadow: none; }
+
+/* episode page */
+.ep-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 12px; }
+.ep-head .nav { margin-left: auto; display: flex; gap: 6px; }
+.ep-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
+@media (max-width: 1150px) { .ep-layout { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; box-shadow: var(--shadow); }
+.stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+.stage video { display: block; width: 100%; max-height: 64vh; aspect-ratio: 2 / 1; object-fit: contain; background: #000; }
+.stage .cams { position: absolute; top: 8px; left: 0; right: 0; display: flex; pointer-events: none; }
+.stage .cams span { flex: 1; padding-left: 8px; }
+.stage.hd .cams { display: none; }
+.stage .loading { position: absolute; inset: 0; display: grid; place-items: center; color: #ccc; background: rgba(0, 0, 0, 0.35); }
+.timeline { position: relative; display: flex; height: 30px; margin-top: 10px; border-radius: 6px; overflow: hidden; cursor: pointer; user-select: none; touch-action: none; background: var(--surface-2); }
+.seg { position: relative; min-width: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-2); border-right: 1px solid var(--surface); overflow: hidden; }
+.seg.alt { background: var(--band); }
+.seg.hold { box-shadow: inset 0 -3px 0 var(--muted); }
+.seg span { overflow: hidden; text-overflow: clip; white-space: nowrap; padding: 0 2px; }
+.seg.cur { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); font-weight: 600; }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); pointer-events: none; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; }
+.transport .readout { font-size: 13px; min-width: 220px; }
+.transport .readout b { font-weight: 650; }
+.transport .spacer { flex: 1; }
+.seg-ctl { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-ctl button { border: 0; border-radius: 0; }
+.seg-ctl button + button { border-left: 1px solid var(--border); }
+.seg-ctl button.on { background: var(--surface-2); font-weight: 600; }
+.side { display: grid; gap: 14px; }
+.review-btns { display: flex; gap: 6px; margin-bottom: 8px; }
+.review-btns button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.review-btns button::before { content: ""; width: 9px; height: 9px; border-radius: 50%; }
+.review-btns .good::before { background: var(--good); }
+.review-btns .bad::before { background: var(--bad); }
+.review-btns .unsure::before { background: var(--unsure); }
+.review-btns button.on.good { border-color: var(--good); background: color-mix(in srgb, var(--good) 14%, var(--surface)); }
+.review-btns button.on.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, var(--surface)); }
+.review-btns button.on.unsure { border-color: var(--unsure); background: color-mix(in srgb, var(--unsure) 16%, var(--surface)); }
+.review-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--text-2); }
+dl.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+dl.facts dt { color: var(--text-2); }
+dl.facts dd { margin: 0; text-align: right; }
+table.mini th, table.mini td { padding: 3px 6px; font-size: 12.5px; }
+table.mini th { background: none; border-bottom: 1px solid var(--border); }
+table.mini td { border-bottom: 0; }
+table.mini tr.total td { border-top: 1px solid var(--border); font-weight: 650; }
+table.mini tr.cur td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.traces { margin-top: 18px; }
+.traces .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 12.5px; color: var(--text-2); margin-bottom: 8px; }
+.traces .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.lk { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--s1); }
+.lk.cmd { border-top: 2px dashed var(--s2); }
+.panels { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1150px) { .panels { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px 8px; }
+.phead { display: flex; align-items: baseline; gap: 8px; font-size: 12px; margin-bottom: 4px; }
+.pname { font-weight: 600; }
+.pvals { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); }
+.pvals .sw { display: inline-block; width: 10px; height: 0; border-top: 2px solid var(--s1); }
+.pvals .sw.c { border-top: 2px dashed var(--s2); margin-left: 6px; }
+.pbody { position: relative; height: 96px; }
+.plot { position: absolute; top: 0; bottom: 0; left: 36px; width: calc(100% - 36px); height: 100%; cursor: crosshair; overflow: visible; }
+.plot .band { fill: var(--band); }
+.plot polyline { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.plot .state { stroke: var(--s1); }
+.plot .cmd { stroke: var(--s2); stroke-dasharray: 5 3; }
+.plot .cursor { stroke: var(--cursor); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.ylab { position: absolute; left: 0; width: 32px; text-align: right; font-size: 10px; line-height: 1; color: var(--muted); pointer-events: none; }
+.ylab.top { top: 0; }
+.ylab.bot { bottom: 0; }
+
+/* help */
+#help { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+#help[hidden] { display: none; }
+#help .card { max-width: 520px; width: calc(100% - 32px); }
+#help table td { border: 0; padding: 4px 8px; }
+#help table td:first-child { white-space: nowrap; text-align: right; }
+</style>
+</head>
+<body>
+<header class="top">
+  <nav id="crumbs"></nav>
+  <button id="help-btn" type="button" title="Keyboard shortcuts (?)">Shortcuts <kbd>?</kbd></button>
+</header>
+<main id="app"></main>
+<div id="help" hidden>
+  <div class="card" role="dialog" aria-label="Keyboard shortcuts">
+    <h2>Episode page</h2>
+    <table>
+      <tr><td><kbd>Space</kbd></td><td>Play / pause</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous / next frame (with <kbd>Shift</kbd>: 10 frames)</td></tr>
+      <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>First / last frame</td></tr>
+      <tr><td><kbd>N</kbd> <kbd>P</kbd></td><td>Next / previous episode (also <kbd>]</kbd> <kbd>[</kbd>)</td></tr>
+      <tr><td><kbd>G</kbd> <kbd>B</kbd> <kbd>U</kbd></td><td>Mark good / bad / unsure (again to clear)</td></tr>
+      <tr><td><kbd>H</kbd></td><td>Switch between the policy-input video and the hi-res render</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Back to the family grid</td></tr>
+    </table>
+    <p class="muted small">Click or drag on the phase timeline, or click a trace, to seek. Hovering a trace shows its values at that row on every trace.</p>
+    <div style="text-align:right"><button type="button" id="help-close">Close</button></div>
+  </div>
+</div>
+<script>
+'use strict';
+const app = document.getElementById('app');
+const crumbs = document.getElementById('crumbs');
+const enc = encodeURIComponent;
+const REVIEW = ['good', 'bad', 'unsure'];
+const HOLDING = new Set(['close', 'lift', 'preplace', 'seat', 'hold']);
+const TRACE_LABELS = ['joint 1', 'joint 2', 'joint 3', 'joint 4', 'joint 5', 'joint 6', 'joint 7', 'gripper'];
+
+const prefs = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem('demo-viewer:' + key); return v === null ? fallback : JSON.parse(v); }
+    catch { return fallback; }
+  },
+  set(key, value) { try { localStorage.setItem('demo-viewer:' + key, JSON.stringify(value)); } catch { /* storage unavailable */ } },
+};
+
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k === 'style') e.style.cssText = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid == null || kid === false) continue;
+    e.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return e;
+}
+function svg(tag, attrs = {}) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+const fmt = (v, d = 2) => (v == null || Number.isNaN(+v)) ? '–' : Number(v).toFixed(d);
+const pct = v => v == null ? '–' : Math.round(v * 100) + '%';
+const epNum = name => String(parseInt(name.replace('episode_', ''), 10));
+const isTyping = ev => ev.target instanceof Element && !!ev.target.closest('textarea, input[type=text], select');
+const pill = (status, text) => el('span', { class: `pill ${status || ''}`, text: text ?? status ?? 'note' });
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  let body = {};
+  try { body = await r.json(); } catch { /* not JSON */ }
+  if (!r.ok) throw new Error(body.error || `${r.status} ${r.statusText}`);
+  return body;
+}
+
+let cleanups = [];
+const onCleanup = fn => cleanups.push(fn);
+function runCleanups() {
+  for (const fn of cleanups.splice(0)) { try { fn(); } catch (e) { console.error(e); } }
+}
+// Re-fetch every 15 s while the tab is visible (a running collection or MimicGen generation appends episodes).
+const POLL_MS = 15000;
+function poll(fn) {
+  let busy = false;
+  const id = setInterval(async () => {
+    if (document.hidden || busy) return;
+    busy = true;
+    try { await fn(); } catch (e) { console.warn('poll', e); } finally { busy = false; }
+  }, POLL_MS);
+  onCleanup(() => clearInterval(id));
+}
+
+function setCrumbs(items) {
+  crumbs.replaceChildren(...items.flatMap((it, i) => {
+    const node = it.href ? el('a', { href: it.href, text: it.label }) : el('span', { class: 'here', text: it.label });
+    return i ? [el('span', { class: 'sep', text: '/' }), node] : [node];
+  }));
+}
+
+let routeToken = 0;
+async function route() {
+  runCleanups();
+  const token = ++routeToken;
+  const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  try {
+    if (parts[0] === 'f' && parts[1]) await viewFamily(parts[1], token);
+    else if (parts[0] === 'e' && parts[1] && parts[2]) await viewEpisode(parts[1], parts[2], token);
+    else await viewOverview(token);
+  } catch (err) {
+    if (token === routeToken) {
+      app.replaceChildren(el('div', { class: 'error' }, el('strong', { text: 'Could not load. ' }), err.message));
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- overview */
+
+async function viewOverview(token) {
+  setCrumbs([{ label: 'Scripted demos' }]);
+  document.title = 'Scripted Demo Viewer';
+  app.replaceChildren(el('p', { class: 'muted', text: 'Loading families…' }));
+  paintOverview(await api('/api/families'), token);
+  let last = '';
+  poll(async () => {
+    const fams = await api('/api/families');
+    const sig = JSON.stringify(fams);
+    if (token === routeToken && sig !== last) { last = sig; paintOverview(fams, token); }
+  });
+}
+
+function paintOverview(fams, token) {
+  if (token !== routeToken) return;
+  const total = fams.reduce((s, f) => s + (f.episodes || 0), 0);
+  const href = f => `#/f/${enc(f.id)}`;
+  const failureChips = failures => {
+    const items = Object.entries(failures || {}).sort((a, b) => b[1] - a[1]);
+    return items.length ? items.map(([k, v]) => el('span', { class: 'chip', text: `${k.replace(/_/g, ' ')} ${v}` })) : el('span', { class: 'muted', text: 'none' });
+  };
+  const reviewCell = (r, n) => {
+    const done = REVIEW.reduce((s, k) => s + (r?.[k] || 0), 0);
+    if (!done) return el('span', { class: 'muted', text: 'not started' });
+    return el('span', {}, REVIEW.filter(k => r[k]).map(k => [pill(k, `${r[k]} ${k}`), ' ']), el('span', { class: 'muted small', text: `${done}/${n}` }));
+  };
+  const rows = fams.map(f => f.error
+    ? el('tr', {}, el('td', { text: f.id }), el('td', { colspan: 7, class: 'muted', text: f.error }))
+    : el('tr', { class: 'link', onclick: ev => { if (!ev.target.closest('a')) location.hash = href(f); } },
+        el('td', {}, el('a', { class: 'fam', href: href(f), text: f.id }), el('div', { class: 'muted small', text: f.prompt })),
+        el('td', { class: 'num', text: f.episodes }),
+        el('td', { class: 'num' }, f.attempts ? `${f.successes} / ${f.attempts}` : '–',
+          f.attempts ? el('div', { class: 'muted small', text: pct(f.successes / f.attempts) }) : null),
+        el('td', {}, failureChips(f.failures)),
+        el('td', { class: 'num', text: f.step_min == null ? '–' : `${f.step_min}–${f.step_max}` }),
+        el('td', { class: 'num', text: f.layouts }),
+        el('td', { class: 'num', text: f.hd_videos }),
+        el('td', {}, reviewCell(f.reviews, f.episodes))));
+  app.replaceChildren(
+    el('h1', { text: 'Scripted demonstrations' }),
+    el('p', { class: 'muted', text: `${fams.length} families, ${total} episodes. Open a family to watch all of its episodes at once.` }),
+    el('div', { class: 'table-wrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, ['Family', 'Episodes', 'Successful attempts', 'Failed attempts', 'Rows', 'Layouts', 'Hi-res renders', 'Review']
+        .map((t, i) => el('th', { class: [1, 2, 4, 5, 6].includes(i) ? 'num' : null, text: t })))),
+      el('tbody', {}, rows))));
+}
+
+/* ------------------------------------------------------------- family grid */
+
+const scrollMemory = {};
+const lastViewed = {};
+const SORTS = {
+  name: { label: 'Episode', key: e => e.name, dir: 1 },
+  steps: { label: 'Rows, most first', key: e => e.steps, dir: -1 },
+  max_speed: { label: 'Max joint speed, fastest first', key: e => e.max_speed, dir: -1 },
+  extra_steps: { label: 'Steps over plan, most first', key: e => e.extra_steps, dir: -1 },
+  contact: { label: 'Finger contact, lowest first', key: e => e.contact ?? 2, dir: 1 },
+  closedness: { label: 'Closedness after close, highest first', key: e => e.closedness ?? -1, dir: -1 },
+  cost: { label: 'Grasp cost, highest first', key: e => e.cost ?? -1, dir: -1 },
+  offset: { label: 'MimicGen held-object offset, largest first', key: e => e.mimic?.offset ?? -1, dir: -1 },
+};
+const sceneLine = sc => sc ? `sampled scene · anchor ${sc.anchor} · handle ${fmt(sc.toward_deg, 1)}° from camera · ` +
+  `pitcher ${fmt((sc.pitcher_dx ?? NaN) * 100, 0)}/${fmt((sc.pitcher_dy ?? NaN) * 100, 0)} cm · bin ${fmt((sc.bin_dx ?? NaN) * 100, 0)}/${fmt((sc.bin_dy ?? NaN) * 100, 0)} cm` : null;
+const mimicLine = m => m ? `L${m.level} ${m.stitch}${m.twin ? ' twin' : ''} · pick ${m.pick_layout}/#${epNum(m.pick_episode)} · ` +
+  `place ${m.place_layout}/#${epNum(m.place_episode)} · offset ${fmt((m.offset ?? NaN) * 100, 1)} cm` : null;
+
+function videoUrl(fid, e) { return `/video?f=${enc(fid)}&e=${enc(e.name)}&v=${e.steps}_${e.seed}`; }
+
+function makeLoader(concurrency) {
+  const queue = [];
+  let active = 0, dead = false;
+  function pump() {
+    while (!dead && active < concurrency && queue.length) {
+      const job = queue.shift();
+      job.queued = false;
+      if (!job.wanted()) continue;
+      active++;
+      job.start().finally(() => { active--; pump(); });
+    }
+  }
+  return {
+    push(job) { if (job.queued) return; job.queued = true; queue.push(job); pump(); },
+    kill() { dead = true; queue.length = 0; },
+  };
+}
+
+async function viewFamily(fid, token) {
+  setCrumbs([{ label: 'Scripted demos', href: '#/' }, { label: fid }]);
+  document.title = `${fid} · Demo Viewer`;
+  app.replaceChildren(el('p', { class: 'muted', text: 'Loading episodes…' }));
+  let fam = await api(`/api/family?f=${enc(fid)}`);
+  if (token !== routeToken) return;
+
+  const opts = Object.assign({ layout: 'all', review: 'all', sort: 'name', speed: 2, size: 'm' }, prefs.get('grid', {}));
+  const layoutsOf = f => [...new Set(f.episodes.map(e => e.layout))].sort();
+  if (opts.layout !== 'all' && !layoutsOf(fam).includes(opts.layout)) opts.layout = 'all';
+  const save = () => prefs.set('grid', opts);
+
+  const grid = el('div', { class: `grid size-${opts.size}` });
+  const count = el('span', { class: 'count muted small' });
+  const loader = makeLoader(4);
+  const tiles = new Map();  // element -> {setVisible, video}
+  const tileCache = new Map();  // episode name -> {key, node}: kept across filters and polls
+  const observer = new IntersectionObserver(entries => {
+    for (const en of entries) tiles.get(en.target)?.setVisible(en.isIntersecting);
+  }, { rootMargin: '200px 0px' });
+  onCleanup(() => {
+    scrollMemory[fid] = window.scrollY;
+    observer.disconnect();
+    loader.kill();
+    for (const t of tiles.values()) { t.video.pause(); t.video.removeAttribute('src'); t.video.load(); }
+  });
+
+  function control(key, label, options, onchange) {
+    const s = el('select', {}, options.map(([v, t]) => el('option', { value: v, text: t, selected: String(opts[key]) === String(v) })));
+    s.addEventListener('change', () => { opts[key] = key === 'speed' ? +s.value : s.value; save(); s.blur(); onchange(); });
+    return el('label', { class: 'ctl' }, el('span', { text: label }), s);
+  }
+  const applySpeed = () => { for (const t of tiles.values()) { t.video.defaultPlaybackRate = opts.speed; t.video.playbackRate = opts.speed; } };
+
+  function tile(e) {
+    const review = fam.reviews[e.name];
+    const video = el('video', { muted: true, loop: true, playsinline: true, preload: 'none', disablepictureinpicture: true });
+    video.muted = true;
+    const status = el('div', { class: 'tstatus' });
+    const node = el('a', {
+      class: ['tile', review?.status, e.name === lastViewed[fid] ? 'last' : null].filter(Boolean).join(' '),
+      href: `#/e/${enc(fid)}/${e.name}`,
+      title: `${e.name} · ${e.task} · seed ${e.seed}${e.mimic ? '\n' + mimicLine(e.mimic) : ''}${review?.note ? '\nNote: ' + review.note : ''}`,
+    },
+      el('div', { class: 'vid' }, video, status,
+        el('div', { class: 'corner l' }, review ? pill(review.status, review.status || 'note') : null),
+        el('div', { class: 'corner r' }, e.hd ? el('span', { class: 'tag', text: 'hi-res', title: 'The collector also rendered this episode in hi-res' }) : null)),
+      el('div', { class: 'tmeta' }, el('strong', { text: `#${epNum(e.name)}` }), el('span', { text: `layout ${e.layout} · seed ${e.seed}` }),
+        el('span', { class: 'right', text: `${e.steps} rows` })),
+      e.mimic ? el('div', { class: 'tmeta2 muted', text: mimicLine(e.mimic) }) : null,
+      e.scene ? el('div', { class: 'tmeta2 muted', text: sceneLine(e.scene) }) : null,
+      el('div', { class: 'tmeta2 muted', text: `closedness ${fmt(e.closedness)} · contact ${pct(e.contact)} · +${e.extra_steps} steps · ${fmt(e.max_speed, 1)} rad/s` }));
+    let visible = false, loaded = false;
+    const job = {
+      queued: false,
+      wanted: () => visible && !loaded,
+      start: () => new Promise(resolve => {
+        status.textContent = 'rendering…';
+        const finish = ok => {
+          video.removeEventListener('loadeddata', onOk);
+          video.removeEventListener('error', onErr);
+          clearTimeout(timer);
+          if (ok) {
+            loaded = true;
+            status.textContent = '';
+            video.playbackRate = opts.speed;
+            if (visible) video.play().catch(() => {});
+          } else {
+            status.textContent = 'video failed to load';
+          }
+          resolve();
+        };
+        const onOk = () => finish(true), onErr = () => finish(false);
+        const timer = setTimeout(() => finish(false), 90000);
+        video.addEventListener('loadeddata', onOk);
+        video.addEventListener('error', onErr);
+        video.defaultPlaybackRate = opts.speed;
+        video.src = videoUrl(fid, e);
+        video.load();
+      }),
+    };
+    tiles.set(node, {
+      video,
+      setVisible(v) {
+        visible = v;
+        if (!v) { video.pause(); return; }
+        if (loaded) video.play().catch(() => {});
+        else loader.push(job);
+      },
+    });
+    observer.observe(node);
+    return node;
+  }
+  const tileKey = e => JSON.stringify([e.steps, e.seed, e.hd, fam.reviews[e.name] || null, e.name === lastViewed[fid]]);
+  function dropTile(node) {
+    const t = tiles.get(node);
+    if (t) { t.video.pause(); t.video.removeAttribute('src'); t.video.load(); }
+    observer.unobserve(node);
+    tiles.delete(node);
+  }
+
+  function render() {
+    const sort = SORTS[opts.sort] || SORTS.name;
+    const shown = fam.episodes.filter(e => {
+      if (opts.layout !== 'all' && e.layout !== opts.layout) return false;
+      const st = fam.reviews[e.name]?.status;
+      if (opts.review === 'unreviewed') return !st;
+      if (opts.review !== 'all') return st === opts.review;
+      return true;
+    }).sort((a, b) => {
+      const ka = sort.key(a), kb = sort.key(b);
+      return (ka < kb ? -1 : ka > kb ? 1 : 0) * sort.dir || a.name.localeCompare(b.name);
+    });
+    // Reuse tiles whose episode, render and review are unchanged, so a poll does not restart playing videos.
+    const keep = new Set();
+    const nodes = shown.map(e => {
+      const key = tileKey(e);
+      let c = tileCache.get(e.name);
+      if (!c || c.key !== key) {
+        if (c) dropTile(c.node);
+        c = { key, node: tile(e) };
+        tileCache.set(e.name, c);
+      }
+      keep.add(e.name);
+      return c.node;
+    });
+    for (const [name, c] of tileCache) if (!keep.has(name)) { dropTile(c.node); tileCache.delete(name); }
+    count.textContent = `Showing ${shown.length} of ${fam.episodes.length} episodes`;
+    grid.replaceChildren(...(nodes.length ? nodes : [el('p', { class: 'muted', text: 'No episodes match these filters.' })]));
+  }
+
+  const head = el('div'), toolbar = el('div', { class: 'toolbar' }), fails = el('details', { class: 'fails' });
+  function paintChrome() {
+    const layouts = layoutsOf(fam);
+    const s = fam.summary || {};
+    const attempts = s.attempts ?? (fam.episodes.length + fam.failures.length);
+    const succeeded = s.successes ?? fam.episodes.length;
+    const rows = fam.episodes.map(e => e.steps);
+    const reviewedCounts = REVIEW.map(k => [k, Object.values(fam.reviews).filter(r => r.status === k).length]).filter(([, n]) => n);
+    const hasPairs = fam.failures.some(f => f.pair);
+    const failTable = fam.failures.length ? el('div', { class: 'table-wrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, ['Layout', 'Seed', ...(hasPairs ? ['Level', 'Pick | place | stitch'] : []), 'Failure', 'Segment', 'Detail', 'Video']
+        .map(t => el('th', { text: t })))),
+      el('tbody', {}, fam.failures.map(f => el('tr', {},
+        el('td', { text: f.layout ?? '' }), el('td', { text: f.seed ?? '' }),
+        hasPairs ? [el('td', { text: f.level ?? '' }), el('td', { class: 'small', text: f.pair || '' })] : null,
+        el('td', { text: (f.failure || '').replace(/_/g, ' ') }),
+        el('td', { text: f.segment || '–' }), el('td', { class: 'small', text: f.detail || '' }),
+        el('td', {}, f.video ? el('a', { href: `/hd?f=${enc(fid)}&name=${enc(f.video)}`, target: '_blank', text: 'open' }) : el('span', { class: 'muted', text: '–' })))))))
+      : el('p', { class: 'muted', style: 'padding: 0 14px 10px', text: 'None.' });
+    head.replaceChildren(
+      el('div', { class: 'fam-head' }, el('h1', { text: fid }), el('span', { class: 'muted', text: fam.prompt })),
+      el('div', { class: 'muted small' },
+        `${fam.episodes.length} episodes over ${layouts.length} layouts · ${succeeded} of ${attempts} attempts succeeded · `,
+        rows.length ? `${Math.min(...rows)}–${Math.max(...rows)} rows at 15 fps` : '',
+        reviewedCounts.length ? [' · reviewed: ', reviewedCounts.map(([k, n]) => [pill(k, `${n} ${k}`), ' '])] : null,
+        el('span', { title: 'The page re-reads the family every 15 s while visible' }, ' · live')));
+    toolbar.replaceChildren(
+      control('layout', 'Layout', [['all', 'All'], ...layouts.map(l => [l, l])], render),
+      control('review', 'Review', [['all', 'All'], ['unreviewed', 'Not reviewed'], ['good', 'Good'], ['bad', 'Bad'], ['unsure', 'Unsure']], render),
+      control('sort', 'Sort', Object.entries(SORTS).map(([k, v]) => [k, v.label]), render),
+      control('speed', 'Speed', [[0.5, '0.5×'], [1, '1×'], [2, '2×'], [4, '4×']], applySpeed),
+      control('size', 'Tiles', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']], () => { grid.className = `grid size-${opts.size}`; }),
+      count);
+    fails.replaceChildren(el('summary', { text: `Failed attempts (${fam.failures.length}), not in the file` }), failTable);
+  }
+
+  app.replaceChildren(head, toolbar, grid, fails);
+  paintChrome();
+  render();
+  const y = scrollMemory[fid];
+  if (y) requestAnimationFrame(() => window.scrollTo(0, y));
+
+  const sig = f => JSON.stringify([f.episodes.map(e => [e.name, e.steps, e.hd]), f.failures.length, f.reviews, f.summary]);
+  let last = sig(fam);
+  poll(async () => {
+    const next = await api(`/api/family?f=${enc(fid)}`);
+    if (token !== routeToken) return;
+    const s = sig(next);
+    if (s === last) return;
+    last = s;
+    fam = next;
+    paintChrome();
+    render();
+  });
+}
+
+/* ------------------------------------------------------------ episode page */
+
+function makePanel(label, state, cmd, isGripper, phases, hooks) {
+  const n = state.length, W = Math.max(n - 1, 1), H = 100;
+  let lo = Math.min(...state, ...cmd), hi = Math.max(...state, ...cmd);
+  if (isGripper) { lo = Math.min(lo, 0); hi = Math.max(hi, 1); }
+  if (hi - lo < 0.02) { const m = (hi + lo) / 2; lo = m - 0.01; hi = m + 0.01; }
+  const pad = (hi - lo) * 0.08;
+  lo -= pad; hi += pad;
+  const y = v => (H - (v - lo) / (hi - lo) * H).toFixed(2);
+  const points = arr => arr.map((v, i) => `${i},${y(v)}`).join(' ');
+  const plot = svg('svg', { class: 'plot', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': `${label}: measured state and commanded target per row` });
+  phases.forEach((p, i) => { if (i % 2) plot.append(svg('rect', { class: 'band', x: p.start, y: 0, width: p.end - p.start, height: H })); });
+  plot.append(svg('polyline', { class: 'cmd', points: points(cmd) }), svg('polyline', { class: 'state', points: points(state) }));
+  const cursor = svg('line', { class: 'cursor', x1: 0, x2: 0, y1: 0, y2: H });
+  plot.append(cursor);
+  const vs = el('span'), vc = el('span');
+  const frameAt = ev => { const r = plot.getBoundingClientRect(); return Math.max(0, Math.min(n - 1, Math.round((ev.clientX - r.left) / r.width * W))); };
+  plot.addEventListener('pointermove', ev => hooks.hover(frameAt(ev)));
+  plot.addEventListener('pointerleave', () => hooks.hover(null));
+  plot.addEventListener('click', ev => hooks.seek(frameAt(ev)));
+  const digits = isGripper ? 2 : 3;
+  return {
+    node: el('div', { class: 'panel' },
+      el('div', { class: 'phead' }, el('span', { class: 'pname', text: label }),
+        el('span', { class: 'pvals' }, el('i', { class: 'sw', title: 'measured state' }), vs, el('i', { class: 'sw c', title: 'commanded target' }), vc)),
+      el('div', { class: 'pbody' }, plot, el('span', { class: 'ylab top', text: fmt(hi, 2) }), el('span', { class: 'ylab bot', text: fmt(lo, 2) }))),
+    set(f) {
+      cursor.setAttribute('x1', f); cursor.setAttribute('x2', f);
+      vs.textContent = fmt(state[f], digits); vc.textContent = fmt(cmd[f], digits);
+    },
+  };
+}
+
+async function viewEpisode(fid, name, token) {
+  setCrumbs([{ label: 'Scripted demos', href: '#/' }, { label: fid, href: `#/f/${enc(fid)}` }, { label: name }]);
+  app.replaceChildren(el('p', { class: 'muted', text: 'Loading episode…' }));
+  const ep = await api(`/api/episode?f=${enc(fid)}&e=${enc(name)}`);
+  if (token !== routeToken) return;
+  lastViewed[fid] = name;
+  document.title = `#${epNum(name)} ${ep.task} · Demo Viewer`;
+  const n = ep.steps, fps = ep.fps;
+  const goEpisode = other => { if (other) location.hash = `#/e/${enc(fid)}/${other}`; };
+  const familyHash = `#/f/${enc(fid)}`;
+  const sources = { policy: videoUrl(fid, ep), hd: ep.hd ? `/hd?f=${enc(fid)}&name=${enc(ep.hd)}` : null };
+  let source = prefs.get('source', 'policy');
+  if (!sources[source]) source = 'policy';
+  let speed = prefs.get('speed', 1);
+  let frame = -1, hoverFrame = null;
+
+  // video
+  const video = el('video', { playsinline: true, preload: 'auto', muted: true, disablepictureinpicture: true });
+  video.muted = true;
+  video.loop = prefs.get('loop', true);
+  const loading = el('div', { class: 'loading', text: 'Rendering video…' });
+  const stage = el('div', { class: `stage ${source === 'hd' ? 'hd' : ''}` }, video,
+    el('div', { class: 'cams' }, el('span', {}, el('span', { class: 'tag', text: 'exterior' })), el('span', {}, el('span', { class: 'tag', text: 'wrist' }))), loading);
+  const clamp = f => Math.max(0, Math.min(n - 1, f));
+  const frameOf = t => clamp(Math.floor(t * fps + 1e-3));
+  function seek(f) {
+    f = clamp(f);
+    video.currentTime = (f + 0.5) / fps;
+    setFrame(f);
+  }
+  function loadSource(s, autoplay) {
+    source = s;
+    prefs.set('source', s);
+    stage.classList.toggle('hd', s === 'hd');
+    srcBtns.forEach(b => b.classList.toggle('on', b.dataset.src === s));
+    const keep = Math.max(frame, 0), wasPlaying = autoplay ?? !video.paused;
+    loading.textContent = s === 'hd' ? 'Loading hi-res render…' : 'Rendering video…';
+    loading.hidden = false;
+    video.addEventListener('loadedmetadata', () => {
+      if (video.videoWidth) video.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+      video.playbackRate = speed;
+      if (keep > 0) video.currentTime = (keep + 0.5) / fps;
+      if (wasPlaying) video.play().catch(() => {});
+    }, { once: true });
+    video.addEventListener('loadeddata', () => { loading.hidden = true; }, { once: true });
+    video.src = sources[s];
+    video.load();
+  }
+  video.addEventListener('error', () => { loading.hidden = false; loading.textContent = 'Video failed to load. Check the viewer\'s terminal.'; });
+
+  // timeline
+  const segs = ep.phases.map((p, i) => el('div', {
+    class: ['seg', i % 2 ? 'alt' : '', HOLDING.has(p.name) ? 'hold' : ''].join(' '),
+    style: `flex: ${p.end - p.start} 1 0`,
+    title: `${p.name}: rows ${p.start}–${p.end - 1} (${p.end - p.start} rows)${HOLDING.has(p.name) ? ', gripper closed' : ''}`,
+  }, el('span', { text: p.name })));
+  const playhead = el('div', { class: 'playhead' });
+  const timeline = el('div', { class: 'timeline', title: 'Click or drag to seek' }, segs, playhead);
+  const seekFromPointer = ev => { const r = timeline.getBoundingClientRect(); seek(Math.floor((ev.clientX - r.left) / r.width * n)); };
+  timeline.addEventListener('pointerdown', ev => {
+    timeline.setPointerCapture(ev.pointerId);
+    video.pause();
+    seekFromPointer(ev);
+    const move = e2 => seekFromPointer(e2);
+    const up = () => { timeline.removeEventListener('pointermove', move); timeline.removeEventListener('pointerup', up); };
+    timeline.addEventListener('pointermove', move);
+    timeline.addEventListener('pointerup', up);
+  });
+
+  // transport
+  const btn = (label, title, fn, extra = {}) => el('button', { type: 'button', title, ...extra, onclick: ev => { ev.currentTarget.blur(); fn(); } }, label);
+  const togglePlay = () => { if (video.paused) video.play().catch(() => {}); else video.pause(); };
+  const playBtn = btn('Play', 'Play / pause (Space)', togglePlay);
+  video.addEventListener('play', () => { playBtn.textContent = 'Pause'; });
+  video.addEventListener('pause', () => { playBtn.textContent = 'Play'; });
+  const readout = el('span', { class: 'readout' });
+  const speedSel = el('select', { title: 'Playback speed' }, [0.25, 0.5, 1, 2, 4].map(v => el('option', { value: v, text: `${v}×`, selected: v === speed })));
+  speedSel.addEventListener('change', () => { speed = +speedSel.value; prefs.set('speed', speed); video.playbackRate = speed; speedSel.blur(); });
+  const loopBox = el('input', { type: 'checkbox', checked: video.loop });
+  loopBox.addEventListener('change', () => { video.loop = loopBox.checked; prefs.set('loop', video.loop); loopBox.blur(); });
+  const srcBtns = [
+    btn('Policy input', 'The exterior and wrist frames stored in pps.hdf5 (224 px)', () => loadSource('policy'), { 'data-src': 'policy' }),
+    btn('Hi-res render', ep.hd ? 'The collector\'s render: exterior, wrist and viewport (H)' : 'The collector did not render this episode in hi-res', () => loadSource('hd'), { 'data-src': 'hd', disabled: !ep.hd }),
+  ];
+  const transport = el('div', { class: 'transport' },
+    btn('|◀', 'First frame (Home)', () => { video.pause(); seek(0); }),
+    btn('◀', 'Previous frame (←)', () => { video.pause(); seek(frame - 1); }),
+    playBtn,
+    btn('▶', 'Next frame (→)', () => { video.pause(); seek(frame + 1); }),
+    readout,
+    el('span', { class: 'spacer' }),
+    el('label', { class: 'ctl' }, 'Speed', speedSel),
+    el('label', { class: 'ctl' }, loopBox, 'Loop'),
+    el('span', { class: 'seg-ctl' }, srcBtns));
+
+  // traces
+  const hooks = {
+    hover(f) { hoverFrame = f; paintCursor(); },
+    seek(f) { video.pause(); seek(f); },
+  };
+  const panels = TRACE_LABELS.map((label, k) => makePanel(label, ep.state[k], ep.command[k], k === 7, ep.phases, hooks));
+  const paintCursor = () => { const f = hoverFrame ?? Math.max(frame, 0); panels.forEach(p => p.set(f)); };
+
+  // review
+  let review = ep.review || null;
+  const advance = el('input', { type: 'checkbox', checked: prefs.get('advance', false) });
+  advance.addEventListener('change', () => { prefs.set('advance', advance.checked); advance.blur(); });
+  const reviewBtns = REVIEW.map(s => btn(s[0].toUpperCase() + s.slice(1), `Mark ${s} (${s[0].toUpperCase()}); again to clear`, () => mark(s), { class: s }));
+  const note = el('textarea', { rows: 2, placeholder: 'Note, e.g. "grasp slips during preplace" (saved when the box loses focus)' });
+  note.value = review?.note || '';
+  const saved = el('span', {});
+  const paintReview = () => reviewBtns.forEach((b, i) => b.classList.toggle('on', review?.status === REVIEW[i]));
+  async function saveReview(status) {
+    saved.textContent = 'Saving…';
+    try {
+      const res = await api('/api/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ f: fid, e: name, status, note: note.value }) });
+      review = res.review;
+      paintReview();
+      saved.textContent = review ? `Saved ${review.updated.replace('T', ' ')}` : 'Cleared';
+      return true;
+    } catch (err) {
+      saved.textContent = `Not saved: ${err.message}`;
+      return false;
+    }
+  }
+  async function mark(s) {
+    const next = review?.status === s ? null : s;
+    if (await saveReview(next) && next && advance.checked && ep.next && token === routeToken) goEpisode(ep.next);
+  }
+  note.addEventListener('change', () => saveReview(review?.status ?? null));
+  paintReview();
+  if (review?.updated) saved.textContent = `Saved ${review.updated.replace('T', ' ')}`;
+
+  // facts
+  const ex = ep.executor || {};
+  const planned = ex.segment_steps_planned || {}, taken = ex.segment_steps_taken || {};
+  const segRows = ep.phases.map(p => {
+    const tr = el('tr', {}, el('td', { text: p.name }), el('td', { class: 'num', text: planned[p.name] ?? '–' }),
+      el('td', { class: 'num', text: taken[p.name] ?? '–' }), el('td', { class: 'num', text: p.end - p.start }));
+    tr.dataset.start = p.start; tr.dataset.end = p.end;
+    return tr;
+  });
+  const costs = Object.entries(ep.plan?.costs || {});
+  const facts = [
+    ['Rows', `${n} (${(n / fps).toFixed(1)} s)`],
+    ['Layout task', ep.task],
+    ['Seed', ep.seed],
+    ['Grasp id', ep.grasp_id ?? '–'],
+    ['Closedness after close', fmt(ep.closedness, 3), 'Gripper closedness at the end of the close segment; near the slip threshold means a thin or marginal grasp'],
+    ['Finger contact while held', pct(ep.contact), 'Fraction of holding steps with finger contact'],
+    ['Steps over plan', ep.extra_steps, 'Rows the moving segments took beyond their planned durations, waiting to converge'],
+    ['Max joint speed', `${fmt(ep.max_speed, 2)} rad/s`, 'Largest per-row joint change, times 15'],
+    ['Max command lead', `${fmt(ep.max_lead, 3)} rad`, 'Largest gap between a commanded joint target and the measured joint position'],
+  ];
+  const sc = ep.scene;
+  if (sc) facts.push(
+    ['Sampled scene', `anchor layout ${sc.anchor}`, 'The pitcher and bin were offset from this training layout and the pitcher turned so its handle faces the shoulder camera'],
+    ['Handle to camera', `${fmt(sc.toward_deg, 1)}°`, 'Angle between the handle and the bearing to the over-shoulder camera after settling (toward: < 30°)'],
+    ['Offsets', `pitcher ${fmt(sc.pitcher_dx * 100, 1)}, ${fmt(sc.pitcher_dy * 100, 1)} cm · bin ${fmt(sc.bin_dx * 100, 1)}, ${fmt(sc.bin_dy * 100, 1)} cm`, 'x, y from the anchor layout'],
+    ['Nearest eval layout', sc.eval_nearest ? `${sc.eval_nearest.layout}: pitcher ${fmt(sc.eval_nearest.pitcher_m * 100, 1)} cm, ${fmt(sc.eval_nearest.yaw_deg, 0)}°, bin ${fmt(sc.eval_nearest.bin_m * 100, 1)} cm` : '–', 'Scenes near an evaluation arrangement are rejected'],
+  );
+  const m = ep.mimic;
+  if (m) facts.push(
+    ['MimicGen level', `L${m.level} · ${m.stitch} stitch${m.twin ? ' · twin grasp' : ''}`, 'Fallback level of the MimicGen ladder: L0 gripper stitch (Isaac Lab), L1 object stitch, L2 + twin grasps, L3 + layout 44'],
+    ['Pick source', `#${epNum(m.pick_episode)} · layout ${m.pick_layout} · grasp ${m.pick_grasp}`, 'Source episode of pregrasp, grasp and lift, moved with the pitcher'],
+    ['Place source', `#${epNum(m.place_episode)} · layout ${m.place_layout} · grasp ${m.place_grasp}`, 'Source episode of preplace and seat, moved with the bin'],
+    ['Held-object offset', `${fmt((m.offset ?? NaN) * 100, 1)} cm`, "Held-pose model: the pitcher centre at the seat against where the place source put it (0 for the object stitch)"]);
+
+  const layout = el('div', { class: 'ep-layout' },
+    el('div', {},
+      el('div', { class: 'card' }, stage, timeline, transport),
+      el('section', { class: 'traces' },
+        el('div', { class: 'legend' },
+          el('span', { class: 'key' }, el('i', { class: 'lk' }), 'measured state'),
+          el('span', { class: 'key' }, el('i', { class: 'lk cmd' }), 'commanded target (the recorded action)'),
+          el('span', { class: 'muted' }, 'joints in rad, gripper 0 = open, 1 = closed; shaded bands alternate with the phases above')),
+        el('div', { class: 'panels' }, panels.map(p => p.node)))),
+    el('aside', { class: 'side' },
+      el('div', { class: 'card' }, el('h2', { text: 'Review' }), el('div', { class: 'review-btns' }, reviewBtns), note,
+        el('div', { class: 'review-foot' }, saved, el('label', { class: 'ctl small' }, advance, 'Next episode after marking'))),
+      el('div', { class: 'card' }, el('h2', { text: 'Episode' }),
+        el('dl', { class: 'facts' }, facts.map(([k, v, t]) => [el('dt', { text: k, title: t || null }), el('dd', { text: v, title: t || null })]))),
+      el('div', { class: 'card' }, el('h2', { text: 'Segments' }),
+        el('table', { class: 'mini' }, el('thead', {}, el('tr', {}, ['Segment', 'Planned', 'Taken', 'Rows'].map((t, i) => el('th', { class: i ? 'num' : null, text: t })))),
+          el('tbody', {}, segRows)),
+        ex.failure_detail ? el('p', { class: 'small', text: ex.failure_detail }) : null),
+      costs.length ? el('div', { class: 'card' }, el('h2', { text: 'Grasp selection cost' }),
+        el('table', { class: 'mini' }, el('tbody', {}, costs.map(([k, v]) => el('tr', { class: k === 'total' ? 'total' : null },
+          el('td', { text: k.replace(/_/g, ' ') }), el('td', { class: 'num', text: fmt(v, 3) })))))) : null));
+
+  const position = el('span', { class: 'muted', text: `${ep.index + 1} of ${ep.count} · ${ep.task} · seed ${ep.seed}` });
+  const nextBtn = btn('Next ›', 'Next episode (N)', () => goEpisode(ep.next), { disabled: !ep.next });
+  app.replaceChildren(
+    el('div', { class: 'ep-head' },
+      el('h1', { text: `Episode ${epNum(name)}` }),
+      position,
+      el('div', { class: 'nav' },
+        btn('Grid', 'Back to the family grid (Esc)', () => { location.hash = familyHash; }),
+        btn('‹ Previous', 'Previous episode (P)', () => goEpisode(ep.prev), { disabled: !ep.prev }),
+        nextBtn)),
+    layout);
+  // Episodes appended while this page is open: update the count and the Next button.
+  poll(async () => {
+    const fam = await api(`/api/family?f=${enc(fid)}`);
+    if (token !== routeToken) return;
+    const names = fam.episodes.map(e => e.name);
+    const i = names.indexOf(name);
+    if (i < 0) return;
+    ep.next = names[i + 1] ?? null;
+    nextBtn.disabled = !ep.next;
+    position.textContent = `${i + 1} of ${names.length} · ${ep.task} · seed ${ep.seed}`;
+  });
+
+  function setFrame(f) {
+    if (f === frame) return;
+    frame = f;
+    playhead.style.left = `${(f + 0.5) / n * 100}%`;
+    let cur = null;
+    ep.phases.forEach((p, i) => { const on = f >= p.start && f < p.end; segs[i].classList.toggle('cur', on); segRows[i].classList.toggle('cur', on); if (on) cur = p.name; });
+    readout.replaceChildren(el('b', { text: `row ${f}` }), ` / ${n - 1} · ${(f / fps).toFixed(2)} s · `, el('b', { text: cur || '' }));
+    if (hoverFrame == null) paintCursor();
+  }
+
+  let raf = 0;
+  const tick = () => { if (video.readyState >= 1) setFrame(frameOf(video.currentTime)); raf = requestAnimationFrame(tick); };
+  raf = requestAnimationFrame(tick);
+  setFrame(0);
+  loadSource(source, true);
+
+  const onKey = ev => {
+    if (isTyping(ev)) { if (ev.key === 'Escape') ev.target.blur(); return; }
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const step = ev.shiftKey ? 10 : 1;
+    const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    const act = {
+      ' ': togglePlay,
+      ArrowLeft: () => { video.pause(); seek(frame - step); },
+      ArrowRight: () => { video.pause(); seek(frame + step); },
+      Home: () => { video.pause(); seek(0); },
+      End: () => { video.pause(); seek(n - 1); },
+      n: () => goEpisode(ep.next), ']': () => goEpisode(ep.next),
+      p: () => goEpisode(ep.prev), '[': () => goEpisode(ep.prev),
+      g: () => mark('good'), b: () => mark('bad'), u: () => mark('unsure'),
+      h: () => { if (ep.hd) loadSource(source === 'hd' ? 'policy' : 'hd'); },
+      Escape: () => { location.hash = familyHash; },
+    }[key];
+    if (act) { ev.preventDefault(); act(); }
+  };
+  document.addEventListener('keydown', onKey);
+
+  // warm the server's cache for the next episode's video
+  const warm = new AbortController();
+  if (ep.next) {
+    setTimeout(() => {
+      fetch(`/video?f=${enc(fid)}&e=${enc(ep.next)}`, { signal: warm.signal }).then(r => r.body?.cancel()).catch(() => {});
+    }, 800);
+  }
+  onCleanup(() => {
+    document.removeEventListener('keydown', onKey);
+    cancelAnimationFrame(raf);
+    warm.abort();
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  });
+}
+
+/* ------------------------------------------------------------------- help */
+
+const help = document.getElementById('help');
+const toggleHelp = show => { help.hidden = !(show ?? help.hidden); };
+document.getElementById('help-btn').addEventListener('click', ev => { ev.currentTarget.blur(); toggleHelp(true); });
+document.getElementById('help-close').addEventListener('click', () => toggleHelp(false));
+help.addEventListener('click', ev => { if (ev.target === help) toggleHelp(false); });
+document.addEventListener('keydown', ev => {
+  if (isTyping(ev)) return;
+  if (ev.key === '?') { ev.preventDefault(); toggleHelp(); }
+  else if (ev.key === 'Escape' && !help.hidden) { ev.stopImmediatePropagation(); toggleHelp(false); }
+}, true);
+
+window.addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
