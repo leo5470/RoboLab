@@ -1,9 +1,11 @@
-"""Simulator-free source-pool contracts and independent trajectory RNG state."""
+"""Simulator-free source-pool contracts, source-episode readers and independent trajectory RNG state."""
 
 import ast
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
+import importlib
 import json
 from pathlib import Path
 import random
@@ -159,6 +161,91 @@ def source_references(args):
                 raise ValueError(f"Missing/unsuccessful source: {key}")
             ref["task"] = json.loads(stream["data"].attrs["robolab_omy_teleop"])["task"]
     return references
+
+
+@dataclass
+class SourceEpisode:
+    """What MimicGen reads from one source demonstration, whichever kind of recording it comes from.
+
+    Row ``t`` is the scene before ``actions[t]``. Poses are root poses ``x y z qw qx qy qz`` relative to the env
+    origin (the robot root), as Isaac Lab's recorder stores them.
+    """
+
+    actions: np.ndarray  # (N, 8): ARM_JOINTS targets, then the gripper command (+1 open, -1 closed)
+    joint_position: np.ndarray  # (N, J): the robot's full joint vector, in articulation order
+    object_pose: dict  # asset name -> (N, 7)
+    grasp: int  # first step at which the closed gripper has raised the object (grasp_index)
+    success: bool
+    joint_names: tuple | None = None  # articulation order of joint_position, when the recording stores it
+
+
+def grasp_index(gripper_command, object_z, lift=0.02):
+    """First step at which the closed gripper has raised the object by ``lift`` meters."""
+    held = (np.asarray(gripper_command) < 0) & (np.asarray(object_z) - object_z[0] > lift)
+    if not held.any():
+        raise ValueError("the object is never lifted with the gripper closed")
+    return int(np.argmax(held))
+
+
+def pre_action(initial, states):
+    """Rows seen before each action: the initial state, then post-step state ``t - 1``."""
+    return np.concatenate((np.asarray(initial)[:1], np.asarray(states)[:-1]))
+
+
+def source_arrays(episode, object_name, container_name):
+    """Pre-action joints and reference poses of one recorded episode, as NumPy arrays."""
+    actions = np.asarray(episode["actions"])
+    initial, states = episode["initial_state"], episode["states"]
+    if len(states["articulation"]["robot"]["joint_position"]) != len(actions):
+        raise ValueError("recorded actions and states are not aligned")
+    poses = {name: pre_action(initial["rigid_object"][name]["root_pose"], states["rigid_object"][name]["root_pose"])
+             for name in (object_name, container_name)}
+    return {
+        "actions": actions,
+        "joint_position": pre_action(initial["articulation"]["robot"]["joint_position"],
+                                     states["articulation"]["robot"]["joint_position"]),
+        "object_pose": poses,
+        "grasp": grasp_index(actions[:, -1], poses[object_name][:, 2]),
+    }
+
+
+def read_teleop_episode(path, episode, object_name, container_name):
+    """One episode of an Isaac Lab recording (``omy_demos.hdf5``: ``initial_state``, ``states``, ``actions``).
+
+    Only the datasets ``source_arrays`` uses are read (no images), with h5py alone, so CPU tools can call it."""
+    with h5py.File(path, "r") as file:
+        group = file["data"][episode]
+        success = bool(group.attrs.get("success", False))
+        tree = {"actions": group["actions"][()]}
+        for part in ("initial_state", "states"):
+            tree[part] = {
+                "articulation": {"robot": {"joint_position": group[f"{part}/articulation/robot/joint_position"][()]}},
+                "rigid_object": {name: {"root_pose": group[f"{part}/rigid_object/{name}/root_pose"][()]}
+                                 for name in (object_name, container_name)},
+            }
+    arrays = source_arrays(tree, object_name, container_name)
+    return SourceEpisode(actions=arrays["actions"], joint_position=arrays["joint_position"],
+                         object_pose=arrays["object_pose"], grasp=arrays["grasp"], success=success)
+
+
+# Reader per source kind: a function, or "module:function" imported on first use. A reference without a
+# "kind" is a teleoperation (or teleoperation-format MimicGen) recording.
+SOURCE_READERS = {
+    "teleop": read_teleop_episode,
+}
+
+
+def read_source(reference, object_name, container_name):
+    """The :class:`SourceEpisode` of a source reference ``{"file", "episode", "kind"?}``."""
+    kind = reference.get("kind", "teleop")
+    if kind not in SOURCE_READERS:
+        raise ValueError(f"Unknown source kind {kind!r} for {reference['file']}:{reference['episode']}; "
+                         f"known: {sorted(SOURCE_READERS)}")
+    reader = SOURCE_READERS[kind]
+    if isinstance(reader, str):
+        module, name = reader.split(":")
+        reader = getattr(importlib.import_module(module), name)
+    return reader(reference["file"], reference["episode"], object_name, container_name)
 
 
 @contextmanager

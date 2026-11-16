@@ -173,6 +173,10 @@ End-effector poses of the source episodes are not recorded. They are computed by
 
 A demonstration is split in two: up to the grasp, expressed relative to the object, and after it, expressed relative to the container. The grasp is the first step at which the gripper command is closed and the object is 2 cm above its starting height. Object and container default to the `object` and `container` parameters of the task's `success` term; override them with `--object` and `--container`.
 
+## Source kinds
+
+The generator and the CPU path screen read every source episode through `mimic_sources.read_source(reference, object, container)`, which dispatches on the reference's `kind` (default `"teleop"`) to a reader in `mimic_sources.SOURCE_READERS`. A reader returns a `SourceEpisode`: per pre-action row, the commanded `ARM_JOINTS` and gripper (+1 open, −1 closed), the robot's full joint vector, the object and container root poses, and the grasp step defined above; plus the episode's success flag and, if the recording stores it, the joint order. Everything after reading (the `panda_joint3` check, end-effector poses, segments, repairs, lineage) is the same for every kind. `"teleop"` reads Isaac Lab recordings such as `omy_demos.hdf5`; another kind registers its reader as a function or a `"module:function"` string.
+
 ## Options
 
 | Option | Default | Meaning |
