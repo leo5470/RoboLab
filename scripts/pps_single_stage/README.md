@@ -82,4 +82,4 @@ what the comparison is about.
 gammas, over the 50 Simple-PnP v2 layouts of one object through a single server, and writes the
 layout-by-layout report with `analyse_proxy_pairs.py`. The procedure, the conditions under which
 two runs are comparable and how to read the report are in
-[`docs/pps_proxy_evaluation_howto.md`](../../docs/pps_proxy_evaluation_howto.md).
+[`docs/pps_proxy_evaluation.md`](../../docs/pps_proxy_evaluation.md).

@@ -17,7 +17,7 @@ The paired report (analyse_proxy_pairs.py) is written to output/<prefix>_eval_<t
         --gammas 0.4 0.8
 
 A pair folder holds v_ref/ and v_task/, each with final.pt, manifest.json and tracking.json, as the
-training job writes them. See docs/pps_proxy_evaluation_howto.md.
+training job writes them. See docs/pps_proxy_evaluation.md.
 """
 
 import argparse
@@ -36,6 +36,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 TASKS = REPO / "robolab/tasks/single_pnp_v2"
 SERVER = REPO / "scripts/pps_single_stage/start_pps_server.sh"
+NO_RATE_LIMIT = "--/app/runLoops/main/rateLimitEnabled=false"  # Kit's wall-clock pacing of the render loop
 ANALYSE = REPO / "scripts/pps_single_stage/analyse_proxy_pairs.py"
 
 
@@ -139,7 +140,8 @@ def client_command(args, tasks, label, folder, arm=None, gamma=0.0):
     return [str(REPO / ".venv/bin/python"), "policies/pps/run.py", "--remote-host", "localhost",
             "--remote-port", str(args.port), *steer, "--headless", "--device", f"cuda:{args.client_gpu}",
             "--num-envs", "1", "--num-runs", "1", "--video-mode", "none", "--task-dirs", "single_pnp_v2",
-            "--pps-task", label, "--output-folder-name", folder, "--task", *tasks]
+            "--pps-task", label, "--output-folder-name", folder,
+            *(["--kit_args", NO_RATE_LIMIT] if args.no_rate_limit else []), "--task", *tasks]
 
 
 def port_open(port):
@@ -168,6 +170,10 @@ def main(argv=None):
     parser.add_argument("--stagger-s", type=float, default=90.0, help="Delay between simulation starts")
     parser.add_argument("--server-mib", type=int, default=9500, help="Free memory the server needs on its GPU")
     parser.add_argument("--client-mib", type=int, default=7000, help="Free memory one simulation needs on its GPU")
+    parser.add_argument("--no-rate-limit", action="store_true",
+                        help="Run every simulation without Kit's wall-clock rate limiter (faster; see docs/pps_proxy_evaluation.md). "
+                             "Applies to the base run too; the default prefix gains _fast so that such runs are "
+                             "not paired with rate-limited ones by accident")
     parser.add_argument("--no-wait", action="store_true", help="Fail rather than wait when a GPU lacks free memory")
     parser.add_argument("--no-verify", action="store_true", help="Skip hashing the checkpoints")
     parser.add_argument("--dry-run", action="store_true", help="Print the server and client commands and stop")
@@ -193,7 +199,7 @@ def main(argv=None):
         print(f"pair {pair['name']}: task {pair.get('task')}, {pair.get('steps')} steps on {pair.get('dataset_rows')} "
               f"rows, data {str(pair.get('dataset_digest'))[:12]}, prompt {pair.get('prompt')!r}", flush=True)
 
-    prefix = args.prefix or f"pps_v2_{args.object}"
+    prefix = args.prefix or f"pps_v2_{args.object}" + ("_fast" if args.no_rate_limit else "")
     report_dir = REPO / "output" / f"{prefix}_eval_{args.tag}"
     base_dir = args.base_run.resolve() if args.base_run else REPO / "output" / f"{prefix}_base_{args.tag}"
     if args.base_run and not finished(base_dir, tasks):
@@ -219,7 +225,7 @@ def main(argv=None):
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
     (report_dir / "evaluation.json").write_text(json.dumps({
         "object": args.object, "layouts": picked, "tasks": tasks, "pps_task": label, "gammas": args.gammas,
-        "pairs": pairs, "base_run": str(base_dir), "server": {"env": server_env, "command": server_command},
+        "pairs": pairs, "base_run": str(base_dir), "rate_limiter": not args.no_rate_limit, "server": {"env": server_env, "command": server_command},
         "runs": runs, "robolab_revision": revision, "started_unix_s": time.time()}, indent=1) + "\n")
     failed = []
     if todo:

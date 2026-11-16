@@ -9,7 +9,7 @@ report says so. The p-value is the exact two-sided McNemar (sign) test on the di
     analyse_proxy_pairs.py --base output/pps_v2_r3_base_pail_20261111 \
         --arm T=output/pps_v2_pail_T_g04_20261113 --arm L=output/pps_v2_pail_L_g04_20261113
 
-See docs/pps_proxy_evaluation_howto.md.
+See docs/pps_proxy_evaluation.md.
 """
 
 import argparse

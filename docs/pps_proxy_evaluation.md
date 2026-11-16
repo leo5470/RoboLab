@@ -73,6 +73,24 @@ The base policy does not depend on the pairs, so one base run per object is enou
 `--base-run output/pps_v2_<object>_base_<tag>` and the script skips the base run and pairs every
 arm with it. The pail's is `output/pps_v2_r3_base_pail_20261111` (40 of 50).
 
+### Faster runs (`--no-rate-limit`)
+
+By default Kit paces its render loop to wall-clock time even when headless. `--no-rate-limit` adds
+`--kit_args "--/app/runLoops/main/rateLimitEnabled=false"` to every simulation of the invocation,
+the base run included, and names the output folders `pps_v2_<object>_fast_...`. Simulation time,
+physics rate, cameras and the action horizon are unchanged; only the waiting is removed.
+
+- **Gain:** about 30% less loop time in a 128-step replay on an RTX 4090
+  ([`pps_evaluation_performance_20261106.md`](pps_evaluation_performance_20261106.md)). It has not
+  been timed in a closed-loop run on this machine.
+- **Not shown to leave outcomes unchanged.** The replay was bit-identical, but a closed-loop base
+  run with the flag and one without differed on 22 of 92 scenes (campaign B' in
+  [`pps_proxy_evaluation_results_20261106.md`](pps_proxy_evaluation_results_20261106.md)), and it
+  is not known whether the flag or ordinary run-to-run variation caused that.
+- **So keep it on or off for a whole comparison.** Do not pair a `_fast` run with a rate-limited
+  one, and do not pass a rate-limited run as `--base-run` to a `--no-rate-limit` invocation. The
+  evaluations of 2026-11-11 and 2026-11-13 ran with the limiter on.
+
 ## What makes runs comparable
 
 Two runs can be compared layout by layout only if all of these hold. The script keeps them fixed
@@ -84,7 +102,8 @@ within one invocation; they matter when you reuse an older run.
   indices and the `--pps-task` label. The script uses the pairs' training task
   (`SimplePnp<number><Object>`, for example `SimplePnp283UtilityjugA01`) for every run. A run made
   with another label is not paired with these.
-- **Same client flags.** One environment, one run, no video, default open-loop horizon.
+- **Same client flags.** One environment, one run, no video, default open-loop horizon, and the
+  same rate-limiter setting (see above).
 - **Same success rule.** Since commit `27429903` (2026-11-11) placement is judged on pose-derived
   speeds. Totals from before that date used the reported-speed rule and are about two successes in
   fifty lower for the pail base policy (38 against 40), so compare against them as totals only.
