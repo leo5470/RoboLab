@@ -23,6 +23,7 @@ the simulation app.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from typing import TYPE_CHECKING, Callable
 
 from robolab.constants import DEFAULT_TASK_SUBFOLDERS
@@ -201,91 +202,93 @@ def run_evaluation(
             print(f"\033[96m[RoboLab] Task `{task_env}` already done. Skipping.\033[0m")
             continue
 
-        env, env_cfg = create_env(
-            task_env,
-            device=args.device,
-            num_envs=num_envs,
-            instruction_type=args.instruction_type,
-            policy=policy,
-            renderer=args.renderer,
-            rendering_mode=args.rendering_type,
-        )
-
-        if robolab.constants.ENABLE_SUBTASK_PROGRESS_CHECKING and getattr(env_cfg, "subtasks", None) is None:
-            print(
-                f"\033[93m[RoboLab] WARNING: Subtask tracking is enabled but task `{task_env}` "
-                f"has no subtask specification — subtask tracking is skipped for this task, so "
-                f"its episode results will have no score/reason and an empty events log.\033[0m"
-            )
-
-        client = client_factory(args)
-
-        run_idx = 0
-        while True:
-            if is_adaptive:
-                k_so_far, n_so_far = count_task_episodes(episode_results, task_env)
-                if not should_continue_sampling(
-                    k=k_so_far, n=n_so_far, target_width=args.ci_pp_width, n_max=adaptive_max
-                ):
-                    print(
-                        f"\033[96m[RoboLab] Task `{task_env}` adaptive stop at {n_so_far} "
-                        f"episodes ({k_so_far}/{n_so_far} success).\033[0m"
-                    )
-                    break
-            else:
-                if run_idx >= num_runs:
-                    break
-
-            run_episode_ids = [run_idx * num_envs + eid for eid in range(num_envs)]
-            if all(
-                check_run_complete(episode_results=episode_results, env_name=task_env, episode=ep_id)
-                for ep_id in run_episode_ids
-            ):
-                print(f"\033[96m[RoboLab] Task `{task_env}` run `{run_idx}` already done. Skipping.\033[0m")
-                run_idx += 1
-                continue
-
-            if args.instruction_type != "default":
-                run_name = f"{task_env}_{args.instruction_type}_{run_idx}"
-            else:
-                run_name = f"{task_env}_{run_idx}"
-            print(
-                f"\033[96m[RoboLab] Running {run_name}: '{env_cfg.instruction}' "
-                f"(run {run_idx}, {num_envs} envs)\033[0m"
-            )
-
-            env_results, msgs, timing = run_episode(
-                env=env,
-                env_cfg=env_cfg,
-                episode=run_idx,
-                client=client,
-                save_videos=save_videos,
-                video_mode=args.video_mode,
-                headless=args.headless,
-                enable_gt_state=args.enable_gt_state,
-            )
-
-            episode_results = summarize_run(
-                env_results=env_results,
-                msgs=msgs,
-                env=env,
-                env_cfg=env_cfg,
+        with ExitStack() as resources:
+            env, env_cfg = create_env(
+                task_env,
+                device=args.device,
                 num_envs=num_envs,
-                run_idx=run_idx,
-                run_name=run_name,
-                task_env=task_env,
-                scene_output_dir=scene_output_dir,
-                policy=policy,
-                episode_results=episode_results,
-                episode_results_file=episode_results_file,
-                enable_subtask_progress=robolab.constants.ENABLE_SUBTASK_PROGRESS_CHECKING,
-                timing=timing,
                 instruction_type=args.instruction_type,
+                policy=policy,
+                renderer=args.renderer,
+                rendering_mode=args.rendering_type,
             )
+            resources.callback(env.close)
 
-            env.reset_eval_state()
-            run_idx += 1
+            if robolab.constants.ENABLE_SUBTASK_PROGRESS_CHECKING and getattr(env_cfg, "subtasks", None) is None:
+                print(
+                    f"\033[93m[RoboLab] WARNING: Subtask tracking is enabled but task `{task_env}` "
+                    f"has no subtask specification — subtask tracking is skipped for this task, so "
+                    f"its episode results will have no score/reason and an empty events log.\033[0m"
+                )
 
-        env.close()
+            client = client_factory(args)
+            resources.callback(client.close)
+
+            run_idx = 0
+            while True:
+                if is_adaptive:
+                    k_so_far, n_so_far = count_task_episodes(episode_results, task_env)
+                    if not should_continue_sampling(
+                        k=k_so_far, n=n_so_far, target_width=args.ci_pp_width, n_max=adaptive_max
+                    ):
+                        print(
+                            f"\033[96m[RoboLab] Task `{task_env}` adaptive stop at {n_so_far} "
+                            f"episodes ({k_so_far}/{n_so_far} success).\033[0m"
+                        )
+                        break
+                else:
+                    if run_idx >= num_runs:
+                        break
+
+                run_episode_ids = [run_idx * num_envs + eid for eid in range(num_envs)]
+                if all(
+                    check_run_complete(episode_results=episode_results, env_name=task_env, episode=ep_id)
+                    for ep_id in run_episode_ids
+                ):
+                    print(f"\033[96m[RoboLab] Task `{task_env}` run `{run_idx}` already done. Skipping.\033[0m")
+                    run_idx += 1
+                    continue
+
+                if args.instruction_type != "default":
+                    run_name = f"{task_env}_{args.instruction_type}_{run_idx}"
+                else:
+                    run_name = f"{task_env}_{run_idx}"
+                print(
+                    f"\033[96m[RoboLab] Running {run_name}: '{env_cfg.instruction}' "
+                    f"(run {run_idx}, {num_envs} envs)\033[0m"
+                )
+
+                env_results, msgs, timing = run_episode(
+                    env=env,
+                    env_cfg=env_cfg,
+                    episode=run_idx,
+                    client=client,
+                    save_videos=save_videos,
+                    video_mode=args.video_mode,
+                    headless=args.headless,
+                    enable_gt_state=args.enable_gt_state,
+                )
+
+                episode_results = summarize_run(
+                    env_results=env_results,
+                    msgs=msgs,
+                    env=env,
+                    env_cfg=env_cfg,
+                    num_envs=num_envs,
+                    run_idx=run_idx,
+                    run_name=run_name,
+                    task_env=task_env,
+                    scene_output_dir=scene_output_dir,
+                    policy=policy,
+                    episode_results=episode_results,
+                    episode_results_file=episode_results_file,
+                    enable_subtask_progress=robolab.constants.ENABLE_SUBTASK_PROGRESS_CHECKING,
+                    timing=timing,
+                    instruction_type=args.instruction_type,
+                )
+
+                env.reset_eval_state()
+                run_idx += 1
+
 
     summarize_experiment_results(episode_results, show_timing=True)

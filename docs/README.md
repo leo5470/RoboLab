@@ -35,9 +35,15 @@ The core concepts are:
 - **[Environment Registration](environment_registration.md)** — How tasks are combined with robot/observation/action configs into runnable Gymnasium environments
 - **[Environment Generation](environment_generation.md)** — Contact sensor creation, subtask trackers, and runtime environment internals
 - **[Running Environments](environment_run.md)** — Creating environments, evaluation scripts, CLI reference, and robustness testing
+- **[Faster Offline Evaluation](environment_run.md#faster-offline-evaluation)** — Disable Kit's wall-clock render pacing while preserving simulated physics and camera cadence; includes measured PPS replay results
 - **[OMY-L100 Teleoperation](omy_teleoperation.md)** — Upstream OMY joint-space control, demonstration recording, and TCP operator video
 - **[SteamVR 2.16.7 Installation](steamvr_2_16_7.md)** — Pinned Linux runtime, ALVR compatibility fixes, update protection, and recovery
 - **[OMY MimicGen](omy_mimicgen.md)** — Expanding L100 demonstrations of a task with Isaac Lab Mimic
+- **[Keyboard Teleoperation](keyboard_teleoperation.md)** — Remote WebRTC control and successful-demo HDF5 collection with relative IK
+- **[SO-101 Leader Teleoperation](so101_teleoperation.md)** — Server-local USB leader and keyboard controls, commissioning, and demonstration collection
+- **[Quest 3S Teleoperation Plan](quest3s_teleoperation_plan.md)** — Proposed WebXR controller input, headset video, and demonstration collection
+- **[MimicGen and SkillGen Survey](mimicgen_skillgen_survey.md)** — Teleop recording compatibility, DROID adapter requirements, and upstream options
+- **[MimicGen Implementation Plan](mimicgen_implementation_plan.md)** — Proposed task conversion, annotation, generation, validation, and SkillGen milestones
 - **[`num_envs` VRAM size guide](env_vram_size_guide.md)** — Per-task `num_envs` ceiling on L40, measured against pi05
 #### Policy
 - **[Inference Clients](../policies/README.md)** — Built-in policy clients and server setup instructions

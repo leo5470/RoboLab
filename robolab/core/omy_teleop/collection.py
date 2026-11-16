@@ -567,7 +567,9 @@ def run(args, app, *, xr_session):
                                 state = "waiting" if report["status"] == "ready" else "preparation_failed"
                                 keyboard.clear()
                                 gate._near_since = gate._near_vector = gate._anchor = None
-                                print("Scene settled; return L100 to READY and confirm." if state == "waiting"
+                                print(("Settling checks skipped; return L100 to READY and confirm."
+                                       if report.get("checks_skipped") else
+                                       "Scene settled; return L100 to READY and confirm.") if state == "waiting"
                                       else "Scene preparation failed: " + "; ".join(report["reasons"]), flush=True)
                                 show_status()
                         continue

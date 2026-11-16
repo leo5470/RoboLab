@@ -34,15 +34,17 @@ def test_new_collector_defaults():
         15, 4, "held-target", "compact")
 
 
-@pytest.mark.parametrize("schema", ("current", "before_latency", "before_partitions", "before_optimizations"))
+@pytest.mark.parametrize("schema", ("current", "before_settle_skip", "before_latency", "before_partitions", "before_optimizations"))
 def test_old_resume_preserves_exact_contract_and_independent_placement(tmp_path, schema):
     args = parsed("--object-id", "034", "--solver-position-iterations", "16",
                   "--gpu-max-num-partitions", "8", "--placement-checks", "independent")
     original = run_contract(args)
     if schema != "current":
+        del original["options"]["skip_settle_checks"]
+    if schema not in ("current", "before_settle_skip"):
         for name in ("task_checks", "cuda_connections", "physics_workers", "cpu_workers"):
             del original["options"][name]
-    if schema not in ("current", "before_latency"):
+    if schema not in ("current", "before_settle_skip", "before_latency"):
         for name in ("placement_checks", "finger_colliders"):
             del original["options"][name]
     if schema == "before_partitions":
@@ -51,7 +53,7 @@ def test_old_resume_preserves_exact_contract_and_independent_placement(tmp_path,
     resumed = parsed("--resume", str(tmp_path))
     assert (resumed.solver_position_iterations, resumed.gpu_max_num_partitions) == (16, 8)
     assert (resumed.placement_checks, resumed.finger_colliders) == ("independent", "original")
-    if schema != "current":
+    if schema not in ("current", "before_settle_skip"):
         assert (resumed.task_checks, resumed.cuda_connections, resumed.physics_workers, resumed.cpu_workers) == (
             "native", 8, 2, 8)
         for flag, value in (("--task-checks", "cpu"), ("--cuda-connections", "1"), ("--physics-workers", "0")):
@@ -221,3 +223,19 @@ def test_hull_reference_rejects_changed_asset_stack_and_mass_override(tmp_path, 
         spawn.mass_props = NS(mass=1)
     with pytest.raises(ValueError):
         finger_colliders.configure_finger_colliders(cfg, "hulls")
+
+
+@pytest.mark.parametrize("skip", (False, True))
+def test_settle_check_option_is_preserved_on_resume(tmp_path, skip):
+    flags = ["--skip-settle-checks"] if skip else []
+    args = parsed("--object-id", "034", *flags)
+    original = run_contract(args)
+    assert original["options"]["skip_settle_checks"] is skip
+    assert original["preparation"].get("skip_checks", False) is skip
+    LayoutSession.create(tmp_path, args.layout_plan, 1, original).close()
+    resumed = parsed("--resume", str(tmp_path))
+    assert resumed.skip_settle_checks is skip
+    assert run_contract(resumed) == original
+    if not skip:
+        with pytest.raises(SystemExit):
+            parsed("--resume", str(tmp_path), "--skip-settle-checks")

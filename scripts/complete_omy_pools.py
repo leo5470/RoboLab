@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Complete exact-size mixed OMY pools and optionally their camera training files."""
+"""DEPRECATED: Complete exact-size mixed OMY pools and optionally their camera training files.
+
+Deprecated because it completes pools from multisource generations. Build OMY datasets with scripts/omy_dataset_pipeline.py
+(single-source only); see docs/omy_mimicgen.md.
+"""
 
 import argparse
 from collections import Counter
@@ -153,6 +157,8 @@ def complete_pool(session, collected, generated, study, output, *, count=50, gpu
 
 
 def main():
+    print("DEPRECATED: complete_omy_pools.py: it completes pools from multisource generations; use scripts/omy_dataset_pipeline.py (single-source).",
+          file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collected-root", type=Path, default=Path("output/omy_teleop"))
     parser.add_argument("--generated-root", type=Path, default=Path("output/omy_mimicgen"))

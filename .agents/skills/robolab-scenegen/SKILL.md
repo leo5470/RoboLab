@@ -66,12 +66,21 @@ scale or payload change. Do not shrink objects or destinations just to pass chec
    Check both solvers' `(success, message)` results; do not continue a failed solve.
 4. Compute support height from geometry. For a separate tabletop object use
    `new_root_z = old_root_z + support_top_z + clearance - world_bottom_z`, with
-   2 mm initial clearance by default. Use
-   `robolab.core.scenes.placement.supported_root_height` and transformed bounds.
+   the object starting in contact (clearance 0) by default. Use
+   `robolab.core.scenes.placement.supported_root_height` and transformed bounds,
+   passing `clearance=0.0` explicitly because the helper defaults to 2 mm.
+   Contact starts assume no collision shape extends below the visual bottom.
+   Check the asset's collision prims, and measure start-up motion in simulation.
+   Also check that the table rests on the scene's ground plane (see
+   [scene_format.md](references/scene_format.md)); otherwise it moves at the
+   first step and carries every object with it.
    For stacking, preserve the physical solver's solved Z and verify the intended
    support. A container rim is not its interior floor. Do not replace solved Z
    with `dims[2] / 2`, and do not assume `PhysicalSolver` fills table-only Z values.
-5. Write complete poses with degree-to-radian conversion for yaw. Rebase **all**
+5. Write complete poses with degree-to-radian conversion for yaw. Combine the yaw
+   with any rotation the payload root already authors. Never replace that rotation
+   with a yaw-only `orient`; see [scene_format.md](references/scene_format.md).
+   Rebase **all**
    inherited relative asset paths when moving a copied base layer into a different
    directory, including the table, mount, and other referenced assets.
 

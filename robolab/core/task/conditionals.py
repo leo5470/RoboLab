@@ -382,6 +382,94 @@ def _condition_held_for_time(world, current, *, key, duration_s, positions, orie
     return bool(result[0]) if env_id is not None else result
 
 
+SPEED_SOURCES = ("reported", "pose")
+
+
+def _pose_step_speeds(positions, orientations, previous_pos, previous_quat, dt):
+    """Linear (m/s) and angular (rad/s) speeds between two observed poses.
+
+    For unit quaternions with non-negative dot product, |q1 - q0| = 2 sin(theta/4),
+    which stays accurate for the small rotations of resting bodies.
+    """
+    linear = torch.linalg.vector_norm(positions - previous_pos, dim=-1) / dt
+    q1 = orientations / torch.linalg.vector_norm(orientations, dim=-1, keepdim=True).clamp_min(1e-12)
+    q0 = previous_quat / torch.linalg.vector_norm(previous_quat, dim=-1, keepdim=True).clamp_min(1e-12)
+    sign = torch.where((q1 * q0).sum(dim=-1, keepdim=True) < 0, -1.0, 1.0)
+    chord = torch.linalg.vector_norm(q1 - sign * q0, dim=-1)
+    angular = 4 * torch.asin((chord / 2).clamp(max=1.0)) / dt
+    return linear, angular
+
+
+def _pose_speed_state_factory(env):
+    def make_state():
+        last = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
+        pos = torch.zeros((env.num_envs, 2, 3), device=env.device)
+        quat = torch.zeros((env.num_envs, 2, 4), device=env.device)
+        linear = torch.full((env.num_envs, 2), float("nan"), device=env.device)
+        angular = torch.full_like(linear, float("nan"))
+        stationary_ = torch.zeros((env.num_envs, 2), dtype=torch.bool, device=env.device)
+
+        def reset(env_ids):
+            last[env_ids] = -1
+            linear[env_ids] = float("nan")
+            angular[env_ids] = float("nan")
+            stationary_[env_ids] = False
+
+        return {"last": last, "pos": pos, "quat": quat, "linear": linear, "angular": angular,
+                "stationary": stationary_, "__reset__": reset}
+
+    return make_state
+
+
+def _pose_speeds_stationary(world, *, key, positions, orientations, linear_threshold,
+                            angular_threshold, env_id=None):
+    """Per-body stationarity from pose changes between consecutive observed steps.
+
+    Returns a (rows, bodies) bool tensor. The first evaluation in a step stores
+    the pose and result; repeated evaluations in that step return the stored
+    result. A body without a pose from the immediately preceding step (first
+    step, after reset, or after an observation gap) is not stationary.
+    """
+    env = world.env
+    state = world.get_or_init_predicate_state(key, _pose_speed_state_factory(env))
+    rows = slice(None) if env_id is None else slice(env_id, env_id + 1)
+    step = env.episode_length_buf[rows]
+    positions = positions.reshape(-1, 2, 3).to(state["pos"].dtype)
+    orientations = orientations.reshape(-1, 2, 4).to(state["quat"].dtype)
+    last = state["last"][rows]
+    stored_pos, stored_quat = state["pos"][rows], state["quat"][rows]
+    stored_lin, stored_ang, stored_ok = state["linear"][rows], state["angular"][rows], state["stationary"][rows]
+    fresh = last != step
+    # last >= 0 is required: after a reset last is -1, which equals step - 1 at step 0.
+    has_previous = fresh & (last >= 0) & (last == step - 1)
+    linear, angular = _pose_step_speeds(positions, orientations, stored_pos, stored_quat, env.step_dt)
+    nan = torch.full_like(linear, float("nan"))
+    linear = torch.where(has_previous[:, None], linear, nan)
+    angular = torch.where(has_previous[:, None], angular, nan)
+    ok = has_previous[:, None] & (linear < linear_threshold) & (angular < angular_threshold)
+    stored_lin.copy_(torch.where(fresh[:, None], linear, stored_lin))
+    stored_ang.copy_(torch.where(fresh[:, None], angular, stored_ang))
+    stored_ok.copy_(torch.where(fresh[:, None], ok, stored_ok))
+    stored_pos.copy_(torch.where(fresh[:, None, None], positions, stored_pos))
+    stored_quat.copy_(torch.where(fresh[:, None, None], orientations, stored_quat))
+    last.copy_(step)
+    return stored_ok.clone()
+
+
+def _resting_settings(container, gripper_name, exclude_contact_with, settle_time_s, linear_threshold,
+                      angular_threshold, position_tolerance, rotation_tolerance_deg,
+                      support_force_threshold, max_container_tilt_deg, speed_source):
+    """Timer identity. Reported mode keeps the historical key unchanged."""
+    excluded = [exclude_contact_with] if isinstance(exclude_contact_with, str) else list(exclude_contact_with or [])
+    grippers = [gripper_name] if isinstance(gripper_name, str) else list(gripper_name)
+    settings = (container, tuple(sorted(grippers)), tuple(sorted(excluded)),
+                settle_time_s, linear_threshold, angular_threshold, position_tolerance, rotation_tolerance_deg,
+                support_force_threshold, max_container_tilt_deg)
+    if speed_source != "reported":
+        settings = settings + (speed_source,)
+    return excluded, settings
+
+
 @atomic
 @shared_placement_condition(get_world)
 def object_resting_in_container(
@@ -397,6 +485,7 @@ def object_resting_in_container(
     rotation_tolerance_deg: float = 0.5,
     support_force_threshold: float = 0.01,
     max_container_tilt_deg: float = 15.0,
+    speed_source: str = "reported",
     logical: str = "all",
     K: int = 1,
     env_id: int | None = None,
@@ -417,7 +506,17 @@ def object_resting_in_container(
     The window resets on any failed check, missing observation, or episode reset.
     It is shared with identically parameterized subtask/termination checks, so
     full placement credit and episode success occur on the same observed step.
+
+    speed_source selects the speeds compared with linear_threshold and
+    angular_threshold. "reported" uses simulator body velocities. "pose" uses
+    the change between the poses observed on consecutive steps divided by
+    step_dt, for both object and bin; PhysX can report 0.2-0.7 rad/s for
+    resting multi-collider bodies whose poses do not change. In pose mode the
+    first observed step (and the step after a reset or observation gap) has
+    no previous pose and is not stationary.
     """
+    if speed_source not in SPEED_SOURCES:
+        raise ValueError(f"speed_source must be one of {SPEED_SOURCES}, got {speed_source!r}")
     for name, value in (("settle_time_s", settle_time_s),
                         ("linear_threshold", linear_threshold),
                         ("angular_threshold", angular_threshold),
@@ -430,27 +529,36 @@ def object_resting_in_container(
     if not math.isfinite(rotation_tolerance_deg) or not 0 < rotation_tolerance_deg < 180:
         raise ValueError("rotation_tolerance_deg must be between 0 and 180 degrees")
 
-    excluded = [exclude_contact_with] if isinstance(exclude_contact_with, str) else list(exclude_contact_with or [])
-    grippers = [gripper_name] if isinstance(gripper_name, str) else list(gripper_name)
-    settings = (container, tuple(sorted(grippers)), tuple(sorted(excluded)),
-                settle_time_s, linear_threshold, angular_threshold, position_tolerance, rotation_tolerance_deg,
-                support_force_threshold, max_container_tilt_deg)
+    excluded, settings = _resting_settings(
+        container, gripper_name, exclude_contact_with, settle_time_s, linear_threshold, angular_threshold,
+        position_tolerance, rotation_tolerance_deg, support_force_threshold, max_container_tilt_deg, speed_source)
     world = get_world(env)
     container_pos, container_quat = world.get_pose(container, env_id=env_id)
-    container_ready = _and(
-        upright(world, container, tolerance=math.radians(max_container_tilt_deg), env_id=env_id),
-        stationary(world, container, linear_threshold, angular_threshold, env_id=env_id),
-    )
+    container_ready = upright(world, container, tolerance=math.radians(max_container_tilt_deg), env_id=env_id)
+    if speed_source == "reported":
+        container_ready = _and(container_ready,
+                               stationary(world, container, linear_threshold, angular_threshold, env_id=env_id))
 
     def condition(world, obj, env_id=None):
         obj_pos, obj_quat = world.get_pose(obj, env_id=env_id)
+        positions = torch.stack((obj_pos, container_pos), dim=-2)
+        orientations = torch.stack((obj_quat, container_quat), dim=-2)
         current = in_opentop_container(world, obj, container, env_id=env_id)
         current = _and(current, container_ready)
         current = _and(current, world.is_supported_on_surface(
             obj, container, force_threshold=support_force_threshold, env_id=env_id,
         ))
         current = _and(current, gripper_detached(world, obj, gripper_name, env_id=env_id))
-        current = _and(current, stationary(world, obj, linear_threshold, angular_threshold, env_id=env_id))
+        if speed_source == "reported":
+            current = _and(current, stationary(world, obj, linear_threshold, angular_threshold, env_id=env_id))
+        else:
+            # Object and bin, from consecutive observed poses.
+            still = _pose_speeds_stationary(
+                world, key=f"resting_in_container_pose_speed::{(obj, settings)!r}",
+                positions=positions, orientations=orientations,
+                linear_threshold=linear_threshold, angular_threshold=angular_threshold, env_id=env_id,
+            ).all(dim=-1)
+            current = _and(current, bool(still[0]) if env_id is not None else still)
         for surface in excluded:
             current = _and(current, _not(in_contact(
                 world, obj, surface, force_threshold=support_force_threshold, env_id=env_id,
@@ -458,8 +566,8 @@ def object_resting_in_container(
         return _condition_held_for_time(
             world, current, key=f"resting_in_container::{(obj, settings)!r}",
             duration_s=settle_time_s,
-            positions=torch.stack((obj_pos, container_pos), dim=-2),
-            orientations=torch.stack((obj_quat, container_quat), dim=-2),
+            positions=positions,
+            orientations=orientations,
             position_tolerance=position_tolerance, rotation_tolerance_deg=rotation_tolerance_deg,
             env_id=env_id,
         )
@@ -484,16 +592,48 @@ def resting_in_container_diagnostics(env, params: dict, env_id: int = 0) -> dict
     obj, container = p["object"], p["container"]
     if not isinstance(obj, str):
         raise ValueError("Placement diagnostics require one object")
+    speed_source = p["speed_source"]
+    if speed_source not in SPEED_SOURCES:
+        raise ValueError(f"speed_source must be one of {SPEED_SOURCES}, got {speed_source!r}")
     world = get_world(env)
-    excluded = p["exclude_contact_with"]
-    excluded = [excluded] if isinstance(excluded, str) else list(excluded or [])
+    excluded, settings = _resting_settings(
+        container, p["gripper_name"], p["exclude_contact_with"], p["settle_time_s"], p["linear_threshold"],
+        p["angular_threshold"], p["position_tolerance"], p["rotation_tolerance_deg"],
+        p["support_force_threshold"], p["max_container_tilt_deg"], speed_source)
+    step = int(env.episode_length_buf[env_id])
     obj_velocity = world.get_velocity(obj, env_id=env_id)
     bin_velocity = world.get_velocity(container, env_id=env_id)
+    reported_linear = [float(torch.linalg.vector_norm(v[:3])) for v in (obj_velocity, bin_velocity)]
+    reported_angular = [float(torch.linalg.vector_norm(v[3:])) for v in (obj_velocity, bin_velocity)]
+    if speed_source == "reported":
+        linear, angular = reported_linear, reported_angular
+        still = [bool(stationary(world, name, p["linear_threshold"], p["angular_threshold"], env_id=env_id))
+                 for name in (obj, container)]
+    else:
+        # Read-only: the stored result for this step, else a preview against the
+        # stored previous-step pose, else no history (not stationary).
+        linear = angular = [float("nan")] * 2
+        still = [False, False]
+        speed_state = world._predicate_state.get(f"resting_in_container_pose_speed::{(obj, settings)!r}")
+        if speed_state is not None:
+            last = int(speed_state["last"][env_id])
+            if last == step:
+                linear = speed_state["linear"][env_id].tolist()
+                angular = speed_state["angular"][env_id].tolist()
+                still = speed_state["stationary"][env_id].tolist()
+            elif last >= 0 and last == step - 1:
+                poses = [world.get_pose(name, env_id=env_id) for name in (obj, container)]
+                lin, ang = _pose_step_speeds(
+                    torch.stack([pose[0] for pose in poses]).to(speed_state["pos"].dtype),
+                    torch.stack([pose[1] for pose in poses]).to(speed_state["quat"].dtype),
+                    speed_state["pos"][env_id], speed_state["quat"][env_id], env.step_dt)
+                linear, angular = lin.tolist(), ang.tolist()
+                still = ((lin < p["linear_threshold"]) & (ang < p["angular_threshold"])).tolist()
     checks = {
         "inside": bool(in_opentop_container(world, obj, container, env_id=env_id)),
         "bin_upright": bool(upright(world, container, tolerance=math.radians(p["max_container_tilt_deg"]), env_id=env_id)),
-        "bin_stationary": bool(stationary(world, container, p["linear_threshold"], p["angular_threshold"], env_id=env_id)),
-        "object_stationary": bool(stationary(world, obj, p["linear_threshold"], p["angular_threshold"], env_id=env_id)),
+        "bin_stationary": bool(still[1]),
+        "object_stationary": bool(still[0]),
         "bin_support": bool(world.is_supported_on_surface(obj, container, force_threshold=p["support_force_threshold"], env_id=env_id)),
         "gripper_detached": bool(gripper_detached(world, obj, p["gripper_name"], env_id=env_id)),
         "no_excluded_contact": all(not bool(in_contact(world, obj, surface, force_threshold=p["support_force_threshold"], env_id=env_id))
@@ -501,19 +641,16 @@ def resting_in_container_diagnostics(env, params: dict, env_id: int = 0) -> dict
     }
     result = {
         "object": obj, "blocked": [name for name, passed in checks.items() if not passed],
-        "checks": checks, "step": int(env.episode_length_buf[env_id]),
-        "linear_speed_m_s": {"object": float(torch.linalg.vector_norm(obj_velocity[:3])),
-                             "bin": float(torch.linalg.vector_norm(bin_velocity[:3]))},
-        "angular_speed_rad_s": {"object": float(torch.linalg.vector_norm(obj_velocity[3:])),
-                                "bin": float(torch.linalg.vector_norm(bin_velocity[3:]))},
+        "checks": checks, "step": step, "speed_source": speed_source,
+        # None: pose mode without a previous-step pose (no speed exists yet).
+        "linear_speed_m_s": {key: None if math.isnan(v) else v for key, v in zip(("object", "bin"), linear)},
+        "angular_speed_rad_s": {key: None if math.isnan(v) else v for key, v in zip(("object", "bin"), angular)},
         "bin_force_n": world.get_contact_force(obj, container, env_id=env_id).tolist(),
         "required_s": p["settle_time_s"], "observed_s": 0.0,
     }
-    grippers = [p["gripper_name"]] if isinstance(p["gripper_name"], str) else list(p["gripper_name"])
-    settings = (container, tuple(sorted(grippers)), tuple(sorted(excluded)),
-                p["settle_time_s"], p["linear_threshold"], p["angular_threshold"],
-                p["position_tolerance"], p["rotation_tolerance_deg"],
-                p["support_force_threshold"], p["max_container_tilt_deg"])
+    if speed_source != "reported":
+        result["reported_linear_speed_m_s"] = {"object": reported_linear[0], "bin": reported_linear[1]}
+        result["reported_angular_speed_rad_s"] = {"object": reported_angular[0], "bin": reported_angular[1]}
     state = world._predicate_state.get(f"resting_in_container::{(obj, settings)!r}")
     if state is not None:
         since = int(state["since"][env_id])

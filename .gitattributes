@@ -3,6 +3,7 @@
 *.usda filter=lfs diff=lfs merge=lfs -text
 # Generated PnP layers are small text files; keep their diffs reviewable in Git.
 assets/scenes/simple_pnp/*.usda -filter diff merge text eol=lf
+assets/scenes/simple_pnp_v2/*.usda -filter diff merge text eol=lf
 # Data formats
 *.hdf5 filter=lfs diff=lfs merge=lfs -text
 *.npz filter=lfs diff=lfs merge=lfs -text

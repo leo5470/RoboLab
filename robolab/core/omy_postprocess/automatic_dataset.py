@@ -1,10 +1,12 @@
 """Discover pending sessions and publish minimal, camera-equipped HDF5 datasets."""
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
-from collections import Counter
+from collections import Counter, deque
 import fcntl
 import json
+import multiprocessing
 from pathlib import Path
 import re
 import shutil
@@ -189,8 +191,91 @@ def write_training_episode(destination, images, row):
         destination.attrs.update(num_samples=n, task=row["task"], task_instruction=row["task_instruction"])
 
 
+WRITE_WORKERS = 4
+# Worker episode files are written once and copied once; keep them off the dataset disk when RAM is free.
+SCRATCH_ROOT = Path("/dev/shm")
+SCRATCH_MIN_FREE_BYTES = 16 * 1024**3
+
+
+def episode_scratch(session, fallback):
+    """A RAM-backed scratch directory when available, else ``fallback`` (on the output disk)."""
+    try:
+        if SCRATCH_ROOT.is_dir() and shutil.disk_usage(SCRATCH_ROOT).free >= SCRATCH_MIN_FREE_BYTES:
+            return Path(tempfile.mkdtemp(prefix=f"robolab_omy_{session}.", dir=SCRATCH_ROOT))
+    except OSError:
+        pass
+    fallback.mkdir()
+    return fallback
+
+
+def _write_episode_file(images, row, path):
+    """Worker-process body: one training episode in its own HDF5 file.
+
+    h5py holds one lock per process while it decodes and compresses chunks,
+    so threads cannot share this work; separate processes can.
+    """
+    with h5py.File(path, "x") as target:
+        write_training_episode(target.create_group("episode"), images, row)
+    return str(path)
+
+
+def write_training_episodes(data, rows, render, scratch, *, workers=WRITE_WORKERS, render_thread=None, log=None):
+    """Write ``data/demo_i`` for each row in order; ``render(row)`` returns its images file.
+
+    With ``workers`` > 0, ``render_thread`` (a one-thread executor owned by the
+    caller) renders one episode ahead while worker processes write episodes
+    into ``scratch`` files. Finished episodes are copied into ``data`` in row
+    order; the copy keeps compressed chunks as they are, so the stored data
+    matches the in-process path (``workers=0``).
+
+    The caller must shut its renderer down on ``render_thread`` before that
+    thread exits: the Isaac worker runs under ``bwrap --die-with-parent``, and
+    Linux sends that death signal when the launching *thread* exits.
+    """
+    if workers < 1:
+        for i, row in enumerate(rows):
+            if log:
+                log(i)
+            write_training_episode(data.create_group(f"demo_{i}"), render(row), row)
+        return
+    if render_thread is None:
+        raise ValueError("Parallel episode writing needs the caller's render thread")
+    scratch.mkdir(exist_ok=True)
+    pending = deque()
+
+    def collect(limit):
+        # Copy finished episodes in order; block on the oldest once too many are in flight.
+        while pending and (len(pending) > limit or pending[0][1].done()):
+            i, future = pending.popleft()
+            path = Path(future.result())
+            with h5py.File(path, "r") as source:
+                source.copy(source["episode"], data, f"demo_{i}")
+            path.unlink()
+
+    # Render (or verify a cached render) one episode ahead, so the GPU wait and
+    # cache hashing overlap the copy below.
+    pool = ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"))
+    upcoming = None
+    try:
+        upcoming = render_thread.submit(render, rows[0]) if rows else None
+        for i, row in enumerate(rows):
+            if log:
+                log(i)
+            images = upcoming.result()
+            upcoming = render_thread.submit(render, rows[i + 1]) if i + 1 < len(rows) else None
+            pending.append((i, pool.submit(_write_episode_file, images, row, scratch / f"demo_{i}.hdf5")))
+            collect(2 * workers)
+        collect(0)
+    except BaseException:
+        if upcoming is not None:
+            upcoming.cancel()
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
+
+
 def process_one(session, collected, generated, output_root, cache_root, *, count=50,
-                collected_count=None, device="cuda:1", dry_run=False):
+                collected_count=None, device="cuda:1", dry_run=False, write_workers=WRITE_WORKERS):
     if not re.fullmatch(r"[A-Za-z0-9_-]+", session):
         raise ValueError("--session must be an original session folder name")
     options = {"session": session, "count": count, "collected_count": collected_count,
@@ -232,6 +317,9 @@ def process_one(session, collected, generated, output_root, cache_root, *, count
         output_root.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{session}.", dir=output_root))
         worker = BatchRenderer(cache, device)
+        # With parallel writing the renderer lives on this thread, launched and closed there.
+        render_thread = ThreadPoolExecutor(1, thread_name_prefix="omy_render") if write_workers else None
+        scratch = None
         try:
             existing = cache_index([collected / session / "postprocess", generated,
                                     generated.parent / "demo_library" / "renders", cache / "rendered"])
@@ -242,12 +330,17 @@ def process_one(session, collected, generated, output_root, cache_root, *, count
                                     state_encoding="7 measured arm joints (rad), measured finger_joint (rad)",
                                     image_encoding="RGB uint8; pre-action", training_ready=False)
                 data = target.create_group("data")
+                if write_workers:
+                    scratch = episode_scratch(session, staging / ".episodes")
+                write_training_episodes(
+                    data, rows, lambda row: rendered_episode(row, cache, worker, existing, device),
+                    scratch, workers=write_workers, render_thread=render_thread,
+                    log=lambda i: print(f"{session}: preparing training episode {i + 1}/{count}", flush=True))
+                if scratch is not None:
+                    shutil.rmtree(scratch)
+                    scratch = None
                 for i, row in enumerate(rows):
-                    print(f"{session}: preparing training episode {i + 1}/{count}", flush=True)
-                    images = rendered_episode(row, cache, worker, existing, device)
-                    name = f"demo_{i}"
-                    write_training_episode(data.create_group(name), images, row)
-                    manifest_rows.append({"group": f"data/{name}", "kind": row["kind"],
+                    manifest_rows.append({"group": f"data/demo_{i}", "kind": row["kind"],
                                           "generation_source": row.get("generation_source"),
                                           "task": row["task"], "source_sha256": row["source_sha256"],
                                           "source_group": row["episode"], "fingerprint": row["fingerprint"],
@@ -264,9 +357,18 @@ def process_one(session, collected, generated, output_root, cache_root, *, count
             print(f"{session}: final dataset {output / 'training.hdf5'}", flush=True)
             return "complete"
         finally:
-            worker.close()
-            if staging.exists():
-                shutil.rmtree(staging)
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+            try:
+                if render_thread is None:
+                    worker.close()
+                else:
+                    render_thread.submit(worker.close).result()
+            finally:
+                if render_thread is not None:
+                    render_thread.shutdown(wait=True)
+                if staging.exists():
+                    shutil.rmtree(staging)
 
 
 def main(argv=None):
@@ -280,7 +382,11 @@ def main(argv=None):
     parser.add_argument("--collected-count", type=int)
     parser.add_argument("--device", default="cuda:1", help="Isolated host GPU for missing policy-camera renders")
     parser.add_argument("--dry-run", action="store_true", help="Discover and select only; no rendering or dataset publication")
+    parser.add_argument("--write-workers", type=int, default=WRITE_WORKERS,
+                        help="Processes writing training episodes while rendering continues; 0 writes in-process")
     args = parser.parse_args(argv)
+    if args.write_workers < 0:
+        parser.error("--write-workers must be nonnegative")
     if args.count < 1 or (args.collected_count is not None and not 0 <= args.collected_count <= args.count):
         parser.error("Invalid count or collected quota")
     if not re.fullmatch(r"cuda:[0-9]+", args.device):
@@ -291,7 +397,7 @@ def main(argv=None):
     for session in sessions:
         try:
             process_one(session, *roots, count=args.count, collected_count=args.collected_count,
-                        device=args.device, dry_run=args.dry_run)
+                        device=args.device, dry_run=args.dry_run, write_workers=args.write_workers)
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
             failures += 1
             print(f"{session}: not published: {error}", flush=True)

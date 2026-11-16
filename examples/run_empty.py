@@ -50,6 +50,8 @@ parser.add_argument("--num_envs", type=int, default=1, help="Number of environme
 AppLauncher.add_app_launcher_args(parser)
 parser.add_argument("--task", nargs='+', default=None,
                        help="List of tasks to evaluate on ")
+parser.add_argument("--task-dirs", nargs='+', default=None,
+                       help="Task subdirectories to register; defaults to the project configuration.")
 parser.add_argument("--tag", nargs='+', default=None,
                        help="List of tags of tasks to evaluate on ")
 parser.add_argument("--num-steps", type=int, default=50, help="Number of steps to run the environment for.")
@@ -72,7 +74,10 @@ from robolab.core.logging.results import init_experiment, update_experiment_resu
 import robolab.constants # noqa
 
 # Run automatic factory generation before main
-auto_register_droid_envs()
+registration_kwargs = {"task": args_cli.task}
+if args_cli.task_dirs is not None:
+    registration_kwargs["task_dirs"] = args_cli.task_dirs
+auto_register_droid_envs(**registration_kwargs)
 
 robolab.constants.VERBOSE = True
 robolab.constants.DEBUG = False
@@ -85,7 +90,14 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     if args_cli.task:
-        task_envs = get_envs(task=args_cli.task)
+        from robolab.core.task.task_utils import get_task_class_name_from_file
+
+        task_names = [
+            get_task_class_name_from_file(task)
+            if "/" in task or "\\" in task else task
+            for task in args_cli.task
+        ]
+        task_envs = get_envs(task=task_names)
     elif args_cli.tag:
         task_envs = get_envs(tag=args_cli.tag)
     else:

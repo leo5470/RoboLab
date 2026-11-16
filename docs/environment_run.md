@@ -433,6 +433,37 @@ python policies/pi0_family/run.py --output-folder-name 2026-01-24_15-35-59_pi05
 
 **Runtime estimate:** Each task runs up to 900 steps. With policy inference overhead, expect roughly **~15 min per task per run** on a single GPU (at ~1–2 it/s depending on `num_envs` and policy backend). For the full 120-task benchmark this works out to approximately **~20–30 hours per 100 tasks** on a single machine. Tasks that succeed early terminate faster, so actual runtime is usually on the lower end.
 
+## Faster Offline Evaluation
+
+For headless PPS evaluation through `tools/simple_pnp_v2/run_pinned.py`, append:
+
+```bash
+--kit_args "--/app/runLoops/main/rateLimitEnabled=false"
+```
+
+This disables Isaac Sim/Kit's **wall-clock rate limiter** for its main/render
+loop, allowing updates to complete as fast as the hardware permits. In the
+tested DROID configuration, Kit enabled this limiter at 15 Hz and added pacing
+waits during offline evaluation. The `realtime` renderer name selects a
+rendering mode; this separate setting controls wall-clock pacing.
+
+Simulation time still advances at the configured cadence: 120 Hz physics,
+eight physics steps per action, and one render per control step (15 Hz in
+simulation time). Camera observations and sensor video remain enabled. With
+`--open-loop-horizon 8`, the client still executes eight actions per policy
+request. The simulated sequence can finish sooner in real time without
+changing those settings. The pinned launcher retains its GPU settings when
+merging these Kit arguments. If you already supply `--kit_args`, add the
+setting inside its existing quoted value.
+
+A 128-step RTX 4090 action replay with sensor video took 21.6 s with limiting
+enabled and 14.8 s with this flag, about 31% less measured loop time. All 42
+numeric HDF5 datasets, including robot/object trajectories, matched exactly.
+This is a short replay measurement; rendered-image equivalence and full
+closed-loop PPS success equivalence were not tested. See the
+[PPS performance investigation](pps_evaluation_performance_20261106.md) for
+measurements, limitations, and further code optimization candidates.
+
 ## Evaluation Features
 
 The built-in `run_eval.py` provides several features out of the box:

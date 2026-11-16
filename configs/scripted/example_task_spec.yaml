@@ -1,0 +1,13 @@
+task_name: BananaOnPlateTask
+completion_mode: all
+ordered: false
+targets:
+  - object_name: banana
+    destination_name: plate_large
+    destination_relation: on_surface
+    verification_predicate: object_on_top
+    verification_params:
+      object: banana
+      reference_object: plate_large
+      require_gripper_detached: true
+

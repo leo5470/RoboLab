@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Qualify human sources and compare MimicGen strategies on paired scene trials."""
+"""DEPRECATED: Qualify human sources and compare MimicGen strategies on paired scene trials.
+
+Deprecated because multisource source-strategy experiments are no longer run. Build OMY datasets with scripts/omy_dataset_pipeline.py
+(single-source only); see docs/omy_mimicgen.md.
+"""
 
 import argparse
 from collections import Counter
@@ -14,7 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robolab.core.omy_postprocess.automatic_dataset import discover_recordings
 from robolab.core.omy_teleop.final_dataset import gather_candidates
-from robolab.core.omy_teleop.mimic_sources import checksum, contract, STRATEGIES
+from robolab.core.omy_teleop.mimic_sources import checksum, contract, contract_differences, STRATEGIES
 from robolab.core.omy_teleop.quality import THRESHOLDS
 
 spec = importlib.util.spec_from_file_location("omy_batch", Path(__file__).with_name("run_omy_mimic_collection.py"))
@@ -91,6 +95,8 @@ def paired_poses(arms):
 
 
 def main():
+    print("DEPRECATED: compare_omy_mimic_sources.py: multisource source-strategy experiments are no longer run; use scripts/omy_dataset_pipeline.py (single-source).",
+          file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--session", action="append")
@@ -131,7 +137,8 @@ def main():
                 sources = sources[:args.limit_sources]
             batch.atomic_json(snapshot, {"sources": sources, "family": family, "rejected": rejected})
         target_contract = contract(Path(sources[0]["file"]).parent)
-        if any(contract(Path(s["file"]).parent) != target_contract for s in sources):
+        # Allowed differences (speed_source) are recorded per source by mimicgen.
+        if any(contract_differences(target_contract, contract(Path(s["file"]).parent))[0] for s in sources):
             raise ValueError(f"Incompatible source contracts in {session}")
         qualified = []
         entry = report[session] = {"qualification": {}, "pilot": {}}

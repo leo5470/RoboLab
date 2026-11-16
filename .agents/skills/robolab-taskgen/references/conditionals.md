@@ -8,7 +8,7 @@ Signatures and semantics in `robolab/core/task/conditionals.py` are authoritativ
 
 | Function | Use when | Key params |
 |----------|----------|------------|
-| `object_resting_in_container` | Released object resting with sustained bin support and stable poses; permits protrusion | `object`, `container`, `exclude_contact_with`, `settle_time_s`, velocity/pose thresholds |
+| `object_resting_in_container` | Released object resting with sustained bin support and stable poses; permits protrusion | `object`, `container`, `exclude_contact_with`, `settle_time_s`, velocity/pose thresholds, `speed_source` (`"reported"` or `"pose"`) |
 | `object_in_container` | Object placed inside an open-top container (bowl, bin, box) | `object`, `container`, `require_contact_with`, `require_gripper_detached` |
 | `object_on_top` | Object on a surface (plate, shelf, table) via geometry/contact; not a timed stability gate | `object`, `reference_object`, `require_gripper_detached` |
 | `object_enclosed` | Object's bounding box fully enclosed inside container | `object`, `container` |

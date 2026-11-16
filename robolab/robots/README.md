@@ -32,7 +32,7 @@ arm, plus a 720p wrist camera whose intrinsics are calibrated to match pi05 / Dr
 - **Config classes:** `DroidCfg` (robot + wrist camera + EE frame transformers)
 - **Proprioception:** `ProprioceptionObservationCfg` — arm joint positions, gripper open fraction,
   EE pose (both the gripper mount flange `ee_*` and the rotated control frame `eef_*`)
-- **Contact gripper:** `{"gripper": ...left_inner_finger}`
+- **Contact gripper:** `gripper` aliases concrete `left_finger` and `right_finger`
 - **Registrations:** `robolab/registrations/droid/` (jointpos, abs-IK, rel-IK, lighting/background variations)
 
 ```python
