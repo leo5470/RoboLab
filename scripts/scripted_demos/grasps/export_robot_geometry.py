@@ -29,6 +29,12 @@ ROBOT_USD = objects.ROBOLAB_DIR / "assets/robots/franka_robotiq_2f_85_flattened.
 PACKAGE_GEOMETRY = pathlib.Path(kinematics.__file__).with_name("gripper_geometry.json")
 
 
+def _repo_relative(path: pathlib.Path) -> str:
+    """A path inside this checkout relative to it, so the tracked gripper_geometry.json names no local directory."""
+    path = pathlib.Path(path).resolve()
+    return str(path.relative_to(objects.ROBOLAB_DIR)) if path.is_relative_to(objects.ROBOLAB_DIR) else str(path)
+
+
 # ---- arm chain -----------------------------------------------------------------------------------------------------
 
 def export_chain(out: pathlib.Path) -> None:
@@ -126,7 +132,7 @@ def export_gripper_geometry(out: pathlib.Path) -> None:
             else:
                 parts[part] += slices(pts)
     out.write_text(json.dumps({"frame": "DROID Robotiq base_link, open (finger_joint 0)", "slice_m": SLICE,
-                               "robot_usd": str(usd), "robot_usd_sha256": file_sha256(usd),
+                               "robot_usd": _repo_relative(usd), "robot_usd_sha256": file_sha256(usd),
                                "parts": parts}, indent=1))
     print({k: len(v) for k, v in parts.items()}, "->", out)
 
