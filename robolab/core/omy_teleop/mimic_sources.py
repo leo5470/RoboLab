@@ -177,6 +177,10 @@ class SourceEpisode:
     grasp: int  # first step at which the closed gripper has raised the object (grasp_index)
     success: bool
     joint_names: tuple | None = None  # articulation order of joint_position, when the recording stores it
+    # Whether the source arm commanded all seven joints. The six-axis L100 never commands panda_joint3, so a teleop
+    # recording that does is refused; a seven-axis source (scripted 7-DoF IK) may, and the generator's six-joint IK
+    # follows its end-effector poses with panda_joint3 held at home.
+    seven_axis: bool = False
 
 
 def grasp_index(gripper_command, object_z, lift=0.02):

@@ -18,10 +18,10 @@ JOINT_NAMES = tuple(f"panda_joint{i}" for i in range(1, 8)) + tuple(f"finger_{i}
 STEPS, CLOSE = 30, 12
 
 
-def _motion():
+def _motion(joint3=0.0):
     """Pre-action rows of one pick: arm joints (13 incl. fingers), wire actions, object and bin root poses."""
     s = np.linspace(0, 1, STEPS)[:, None]
-    arm = HOME + s * np.array([0.5, 0.3, 0.0, 0.4, 0.3, -0.3, 0.4])
+    arm = HOME + s * np.array([0.5, 0.3, joint3, 0.4, 0.3, -0.3, 0.4])
     joints = np.c_[arm, np.zeros((STEPS, 6))].astype(np.float32)
     wire = np.c_[arm, (np.arange(STEPS) >= CLOSE).astype(float)].astype(np.float32)
     obj = np.tile([0.5, 0.1, 0.0, 1.0, 0.0, 0.0, 0.0], (STEPS, 1)).astype(np.float32)
@@ -30,8 +30,8 @@ def _motion():
     return joints, wire, {OBJECT: obj, CONTAINER: bin_}
 
 
-def _scripted(path, with_state=True):
-    joints, wire, poses = _motion()
+def _scripted(path, with_state=True, joint3=0.0):
+    joints, wire, poses = _motion(joint3)
     buf = EpisodeBuffer(source_sim_origin_s=0.0)
     for t in range(STEPS):
         request = {"observation/joint_position": joints[t, :7], "observation/gripper_position": wire[t, 7:],
@@ -93,6 +93,7 @@ def test_scripted_and_teleop_recordings_of_one_motion_read_alike(files):
         assert np.array_equal(scripted.object_pose[name], teleop.object_pose[name])
     assert scripted.grasp == teleop.grasp == CLOSE + 5  # closed, and 2 cm up (> 0.02 m)
     assert scripted.joint_names == JOINT_NAMES and teleop.joint_names is None
+    assert scripted.seven_axis and not teleop.seven_axis  # only teleop sources must hold panda_joint3
 
 
 def test_path_screen_loads_both_kinds_alike(files):
@@ -103,6 +104,21 @@ def test_path_screen_loads_both_kinds_alike(files):
     for key in scripted:
         a, b = scripted[key], teleop[key]
         assert all(np.array_equal(x, y) for x, y in zip(a, b)) if isinstance(a, tuple) else np.array_equal(a, b), key
+
+
+def test_path_screen_holds_joint3_at_home_for_seven_axis_sources(tmp_path):
+    """A scripted source that moves panda_joint3 is screened as the generator's six-joint arm follows it: IK seeds and
+    the start keep joint 3 at the episode's first (home) value, while achieved hand poses use the joints it had."""
+    arm, path = _arm(), tmp_path / "pps.hdf5"
+    name = _scripted(path, joint3=0.2)
+    source = read_source({"file": str(path), "episode": name, "kind": "scripted"}, OBJECT, CONTAINER)
+    assert np.ptp(source.actions[:, 2]) > 0.19 and np.ptp(source.joint_position[:, 2]) > 0.19
+    screened = load_source(path, name, OBJECT, CONTAINER, arm, kind="scripted")
+    assert np.all(screened["joints"][:, 2] == HOME[2])
+    assert np.array_equal(np.delete(screened["joints"], 2, 1), np.delete(source.joint_position[:, :7], 2, 1))
+    moved = np.array([arm.fk(row) for row in source.joint_position[:, :7]])
+    assert np.array_equal(screened["achieved"], moved)
+    assert np.array_equal(screened["hand"], np.array([arm.fk(row) for row in source.actions[:, :7]]))
 
 
 def test_episode_without_state_is_refused(tmp_path):

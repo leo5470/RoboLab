@@ -6,6 +6,9 @@ each action, in Isaac Lab's recorder layout. Together they give the generator ev
 gives it. The PPS ``actions`` are the joint targets the arm was sent, with the gripper in the wire convention
 (0 open, 1 closed); the generator's convention is +1 open, -1 closed.
 
+The scripted arm uses all seven joints, so its episodes are seven-axis sources (``SourceEpisode.seven_axis``): the
+generator accepts their ``panda_joint3`` motion and follows their end-effector poses with that joint held at home.
+
 Episodes collected before the state group existed cannot be read; collect them again.
 """
 
@@ -46,4 +49,4 @@ def read_episode(path, episode, object_name, container_name) -> SourceEpisode:
     actions = generator_actions(wire)
     return SourceEpisode(actions=actions, joint_position=joints, object_pose=poses,
                          grasp=grasp_index(actions[:, -1], poses[object_name][:, 2]), success=success,
-                         joint_names=joint_names)
+                         joint_names=joint_names, seven_axis=True)
