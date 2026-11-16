@@ -38,11 +38,13 @@ import h5py
 import psutil
 
 from robolab.core.omy_postprocess import pps_hdf5
-from robolab.core.omy_postprocess.automatic_dataset import discover_recordings, locked, process_one, verify_final
+from robolab.core.omy_postprocess.automatic_dataset import (WRITE_WORKERS, discover_recordings, locked, process_one,
+                                                            verify_final)
 from robolab.core.omy_postprocess.io import sha256_file
 from robolab.core.omy_postprocess.validation import validate_recording
 from .dataset_paths import job_recording, source_names
 from .diversity import descriptor
+from . import grasp_groups
 from .final_dataset import choose, export, gather_candidates, parent_key, read_json
 from .quality import THRESHOLDS, assess
 
@@ -55,7 +57,8 @@ TIERS = {
              "yaw_range": math.radians(5)},
 }
 TIER_WEIGHTS = (("near", .5), ("moderate", .25), ("wide", .25))
-IMPLEMENTATION_FILES = ("robolab/core/omy_teleop/mimicgen.py", "robolab/core/omy_teleop/mimic_sources.py")
+IMPLEMENTATION_FILES = ("robolab/core/omy_teleop/mimicgen.py", "robolab/core/omy_teleop/mimic_sources.py",
+                        "robolab/core/omy_teleop/repairs.py", "robolab/core/omy_teleop/target_sampler.py")
 GENERATION_VERSION = "omy_dataset_pipeline_v1"
 POOL_METHOD = ("single source only; up to 10 eligible humans; generated fill balanced across qualified "
                "human parents, then layout-balanced farthest-first")
@@ -71,8 +74,40 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
-def implementation():
-    return {name: sha256_file(REPO / name) for name in IMPLEMENTATION_FILES}
+def implementation(profile="none"):
+    """Generator identity: source hashes, plus the generator profile when one is used."""
+    impl = {name: sha256_file(REPO / name) for name in IMPLEMENTATION_FILES}
+    if profile != "none":
+        from .repairs import GENERATOR_PROFILES
+        impl["generator_profile"] = {"name": profile, "args": list(GENERATOR_PROFILES[profile])}
+    return impl
+
+
+def implementation_tag(impl):
+    """Short stable tag of an implementation record, for job ids."""
+    return hashlib.sha256(json.dumps(impl, sort_keys=True).encode()).hexdigest()[:8]
+
+
+def allocate(total, weights):
+    """Split ``total`` in proportion to ``weights`` (largest remainder; ties to the earlier entry)."""
+    raw = [total * w / sum(weights) for w in weights]
+    counts = [math.floor(r + 1e-9) for r in raw]
+    for index in sorted(range(len(raw)), key=lambda i: (-(raw[i] - counts[i]), i))[:total - sum(counts)]:
+        counts[index] += 1
+    return counts
+
+
+def tier_of(ranges):
+    """The ``TIERS`` entry whose reset ranges a generated recording used, or None."""
+    obj, container = (ranges or {}).get("object_pose_range"), (ranges or {}).get("pose_range")
+    if not obj or not container:
+        return None
+    recorded = (obj["x"][1], obj["yaw"][1], container["x"][1], container["yaw"][1])
+    for name, spec in TIERS.items():
+        expected = (spec["object_pose_range"], spec["object_yaw_range"], spec["pose_range"], spec["yaw_range"])
+        if all(math.isclose(a, b, abs_tol=1e-9) for a, b in zip(recorded, expected)):
+            return name
+    return None
 
 
 def source_key(source):
@@ -110,6 +145,8 @@ def process_job(root, job, gpu, stop, thresholds=LIMITS):
     output = job_recording(root, job).parent
     if output.exists():
         raise RuntimeError(f"Unfinalized job output requires recovery: {output}")
+    if job.get("target_manifest") and job["stage"] != "generate":
+        raise ValueError("Explicit targets are generation jobs")
     command = [sys.executable, "-B", "-u", str(REPO / "examples/generate_omy_mimic.py"), "--worker-exit",
                "--host-gpu", str(gpu), "--input", job["input"], "--target-input", job["input"],
                "--target-episode", job["episode"].split("_")[-1], "--episodes", job["episode"].split("_")[-1],
@@ -117,11 +154,18 @@ def process_job(root, job, gpu, stop, thresholds=LIMITS):
                "--max-attempts", str(job["max_attempts"]), "--seed", str(job["seed"])]
     if job["stage"] == "validate":
         command += ["--no-randomize", "--keep-failed"]
+    elif job.get("target_manifest"):
+        command += ["--no-randomize", "--keep-failed", "--target-manifest", job["target_manifest"],
+                    "--target-id", job["target_id"]]
     else:
         command += ["--keep-failed"]
         for key, value in job["ranges"].items():
             command += ["--" + key.replace("_", "-"), str(value)]
-    impl = implementation()
+    profile = job.get("generator_profile", "none")
+    if profile != "none":
+        from .repairs import GENERATOR_PROFILES
+        command += list(GENERATOR_PROFILES[profile])
+    impl = implementation(profile)
     atomic_json(folder / "job.json", {**job, "gpu": gpu, "command": command, "implementation": impl})
     started = time.time()
     with (folder / "run.log").open("w") as log:
@@ -247,11 +291,15 @@ def verify_lineage(output, manifest, qualified):
         if row["kind"] != "generated":
             continue
         file = output / row["file"]
-        if file not in loaded:
-            with h5py.File(file, "r") as stream:
+        with h5py.File(file, "r") as stream:
+            if file not in loaded:
                 loaded[file] = json.loads(stream["data"].attrs.get("robolab_omy_mimicgen", "{}")).get("sources") or []
+            parents = json.loads(stream["data"][row["episode"]].attrs.get("mimicgen_source", "{}")).get("parents") or []
         if len(loaded[file]) != 1:
             problems.append(f"{row['episode']} in {row['file']}: generated from {len(loaded[file])} loaded sources")
+            continue
+        if len(set(parents)) > 1:
+            problems.append(f"{row['episode']} in {row['file']}: mixed parents {parents}")
             continue
         try:
             parent = parent_key(row)
@@ -362,6 +410,7 @@ class SessionWork:
         self.folder = None          # generated/SESSION: generation jobs and recordings
         self.sources = []
         self.qualified, self.failed = set(), set()
+        self.validations = {}       # qualified parent -> its accepted qualification result
         self.pending_qualify = []
         self.rows = []              # gated, quality-passing candidates (humans and generated)
         self.rejected = []
@@ -370,6 +419,7 @@ class SessionWork:
         self.active = {}            # job id -> job
         self.stage = "prepare"      # prepare, qualify, generate, select, export, done, failed
         self.next_index = 0
+        self.tier_shortfall = {}    # tier -> candidates still missing when generation stopped
         self.status_fields = {}
         self.error = None
 
@@ -377,7 +427,7 @@ class SessionWork:
 class Pipeline:
     def __init__(self, roots, gpus, *, count=50, collected_count=None, max_attempts_per_source=150,
                  candidate_factor=1.5, dry_run=False, stop_after=None, replace_invalid=False, reverify=False,
-                 log=print):
+                 write_workers=WRITE_WORKERS, log=print, generator_profile="none"):
         if stop_after not in (None, *STOP_AFTER):
             raise ValueError(f"stop_after must be one of {STOP_AFTER}")
         self.roots, self.gpus = roots, gpus
@@ -385,15 +435,24 @@ class Pipeline:
         self.max_attempts_per_source, self.candidate_factor = max_attempts_per_source, candidate_factor
         self.dry_run, self.stop_after, self.replace_invalid = dry_run, stop_after, replace_invalid
         self.reverify = reverify
+        self.write_workers = write_workers
         self.log = log
         self.status = Status(roots, dry_run)
         self.cv = threading.Condition()
         self.stop = threading.Event()
         self.running = 0
         self.work = []
-        self.impl = implementation()
+        from .repairs import GENERATOR_PROFILES
+        if generator_profile not in GENERATOR_PROFILES:
+            raise ValueError(f"Unknown generator profile {generator_profile!r}; choose from {sorted(GENERATOR_PROFILES)}")
+        self.generator_profile = generator_profile
+        self.impl = implementation(generator_profile)
 
     # ----- discovery and preparation (CPU, before any GPU work) -----
+
+    def profile_field(self):
+        """Job field naming the generator profile; absent for the default, so old job records stay equal."""
+        return {} if self.generator_profile == "none" else {"generator_profile": self.generator_profile}
 
     def say(self, work, message):
         self.log(f"{work.name}: {message}", flush=True)
@@ -535,8 +594,16 @@ class Pipeline:
         elif not self.dry_run:
             atomic_json(frozen, {"session": session, "family": work.family, "sources": work.sources})
         work.folder = self.roots["generated"] / session
+        marker = work.folder / "generator_profile.json"
+        recorded = read_json(marker)["name"] if marker.exists() else ("none" if (work.folder / "jobs").exists() else None)
+        if recorded not in (None, self.generator_profile):
+            self.fail(work, f"{work.folder} holds generator profile {recorded!r} candidates; use a new "
+                            f"--generated-root for profile {self.generator_profile!r}")
+            return
         if not self.dry_run:
             (work.folder / "jobs").mkdir(parents=True, exist_ok=True)
+            if recorded is None:
+                atomic_json(marker, {"name": self.generator_profile, "implementation": self.impl})
             if not (work.folder / "source_manifest.json").exists():
                 atomic_json(work.folder / "source_manifest.json", {"sources": work.sources})
             self.quarantine_unfinished(work)
@@ -551,6 +618,8 @@ class Pipeline:
             if result["stage"] == "validate" and result.get("implementation") == self.impl:
                 ok = bool(result["accepted"]) and not result["errors"]
                 (work.qualified if ok else work.failed).add(key)
+                if ok:
+                    work.validations[key] = result
             elif result["stage"] == "generate":
                 work.results[key].append(result)
         work.pending_qualify = [s for s in work.sources if source_key(s) not in work.qualified | work.failed]
@@ -562,6 +631,26 @@ class Pipeline:
                        f"single-source candidates; need {quota} human + {generated} generated")
         if not self.dry_run:
             self.status.session(work, status="qualifying", family=work.family, generation_mode="single_source")
+
+    def record_grasp_groups(self, work):
+        """Write ``STATE/SESSION/grasp_groups.json`` from the qualified humans' reproductions.
+
+        Mixed-parent generation reads it to restrict placement parents; it refuses
+        an ``ambiguous`` or ``unavailable`` record. Single-source runs never read it.
+        """
+        if self.dry_run or not work.qualified:
+            return
+        try:
+            recordings = {label(key): (job_recording(work.folder, work.validations[key]), work.validations[key]["accepted"][0])
+                          for key in sorted(work.qualified)}
+            record = grasp_groups.session_groups(recordings, work.family)
+        except (OSError, KeyError, ValueError) as error:
+            record = {"schema_version": 1, "object": work.family, "status": "unavailable", "reason": str(error),
+                      "groups": None}
+        record["implementation"] = self.impl
+        grasp_groups.write(self.roots["state"] / work.name / "grasp_groups.json", record)
+        if record["status"] != "grouped":
+            self.say(work, f"grasp groups {record['status']}: {record['reason']}")
 
     # ----- scheduling (all under self.cv) -----
 
@@ -575,39 +664,87 @@ class Pipeline:
                     continue
         return have
 
+    def tier_targets(self, work):
+        """Candidate targets by (parent, tier): global tier totals, then each tier split across qualified parents.
+
+        ``candidate_factor`` × the generated quota is split over ``TIER_WEIGHTS``
+        first, so every tier is requested however many parents there are.
+        """
+        _, generated = self.humans_quota(work)
+        parents = sorted(work.qualified)
+        totals = dict(zip((t for t, _ in TIER_WEIGHTS),
+                          allocate(math.ceil(self.candidate_factor * generated), [w for _, w in TIER_WEIGHTS])))
+        targets = {}
+        for tier, total in totals.items():
+            for parent, count in zip(parents, allocate(total, [1] * len(parents))):
+                targets[parent, tier] = count
+        return totals, targets
+
+    def tier_counts(self, work):
+        """Quality-passing candidates by (parent, tier).
+
+        A row from one of this pipeline's jobs takes that job's tier; any other
+        generated row takes the tier its recorded reset ranges match, if any.
+        """
+        own = {}
+        if work.folder is not None:
+            for results in work.results.values():
+                for result in results:
+                    own[str(job_recording(work.folder, result).resolve())] = result["tier"]
+        have = Counter()
+        for row in work.rows:
+            if row["kind"] == "generated":
+                try:
+                    parent = parent_key(row)
+                except ValueError:
+                    continue
+                tier = own.get(str(Path(row["file"]).resolve())) if "file" in row else None
+                have[parent, tier or tier_of(row.get("generation_ranges"))] += 1
+        return have
+
     def plan(self, work):
-        """Next generate job, 'select', 'shortfall' or None (wait for active jobs)."""
+        """Next generate job, 'select', 'shortfall' or None (wait for active jobs).
+
+        The most underfilled tier, relative to its total, is served first, by
+        the qualified parent furthest below its share of that tier. A parent
+        may exceed its share only when no parent below it can still generate
+        that tier, so an exhausted parent's share moves to the others instead
+        of to another tier.
+        """
         quota, generated = self.humans_quota(work)
         if not generated:
             return "select"
         if not work.qualified:
             return "shortfall"
-        target = math.ceil(self.candidate_factor * generated / len(work.qualified)) if generated else 0
-        have = self.parent_counts(work)
-        reserved = Counter()
+        totals, targets = self.tier_targets(work)
+        have = self.tier_counts(work)
         for job in work.active.values():
-            reserved[source_key(job)] += job["num_demos"]
+            have[source_key(job), job["tier"]] += job["num_demos"]  # reserved until the job finishes
+        busy = {source_key(job) for job in work.active.values()}
+
+        def budget(key):
+            return self.max_attempts_per_source - sum(r["attempts"] for r in work.results[key])
+
+        def dead(key, tier):
+            previous = [r for r in work.results[key] if r["tier"] == tier]
+            return sum(r["attempts"] for r in previous) >= 20 and not any(r["accepted"] for r in previous)
+
         best = None
-        for source in work.sources:
-            key = source_key(source)
-            if key not in work.qualified or have[key] + reserved[key] >= target:
+        for priority, (tier, _) in enumerate(TIER_WEIGHTS):
+            deficit = totals[tier] - sum(have[k, tier] for k in work.qualified)
+            if deficit <= 0:
                 continue
-            if any(source_key(j) == key for j in work.active.values()):
-                continue
-            results = work.results[key]
-            used = sum(r["attempts"] for r in results)
-            remaining = self.max_attempts_per_source - used
-            tiers = []
-            for priority, (tier, weight) in enumerate(TIER_WEIGHTS):
-                previous = [r for r in results if r["tier"] == tier]
-                if sum(r["attempts"] for r in previous) >= 20 and not any(r["accepted"] for r in previous):
+            alive = [s for s in work.sources if source_key(s) in work.qualified
+                     and budget(source_key(s)) >= 1 and not dead(source_key(s), tier)]
+            below = [s for s in alive if have[source_key(s), tier] < targets[source_key(s), tier]]
+            for source in below or alive:
+                key = source_key(source)
+                if key in busy:
                     continue
-                tiers.append((sum(len(r["accepted"]) for r in previous) / weight, priority, tier))
-            if remaining < 1 or not tiers:
-                continue
-            order = ((have[key] + reserved[key]) / target, source["task"], source["episode"])
-            if best is None or order < best[0]:
-                best = (order, source, min(tiers)[2], remaining, target - have[key] - reserved[key])
+                own = have[key, tier] - targets[key, tier]
+                order = (-deficit / totals[tier], own, priority, source["task"], source["episode"])
+                if best is None or order < best[0]:
+                    best = (order, source, tier, budget(key), min(deficit, -own) if own < 0 else deficit)
         if best is not None:
             _, source, tier, remaining, missing = best
             index = work.next_index
@@ -617,12 +754,15 @@ class Pipeline:
                     "family": work.family, "task": source["task"], "input": source["input"],
                     "episode": source["episode"], "stage": "generate", "tier": tier, "num_demos": demos,
                     "max_attempts": min(remaining, max(24, 3 * demos)), "seed": 3_000_000 + index * 1000,
-                    "ranges": TIERS[tier],
+                    "ranges": TIERS[tier], **self.profile_field(),
                     "output_dir": str(Path(source["task"]) / f"{JOB_PREFIX}{index:05d}_{source['task']}_{tier}"
                                       / Path(source["input"]).name)}
         if work.active:
             return None
-        eligible = sum(n for k, n in have.items() if k in work.qualified)
+        # Selection may still fill the total, but a missing tier is reported, never hidden.
+        work.tier_shortfall = {tier: totals[tier] - sum(have[k, tier] for k in work.qualified)
+                               for tier in totals if sum(have[k, tier] for k in work.qualified) < totals[tier]}
+        eligible = sum(n for (k, _), n in have.items() if k in work.qualified)
         return "select" if eligible >= generated else "shortfall"
 
     def next_task(self):
@@ -632,15 +772,19 @@ class Pipeline:
             if work.stage == "qualify":
                 if work.pending_qualify:
                     source = work.pending_qualify.pop(0)
-                    job_id = f"{JOB_PREFIX}q_{source['task']}_{source['episode']}_{self.impl[IMPLEMENTATION_FILES[0]][:8]}"
+                    tag = (self.impl[IMPLEMENTATION_FILES[0]][:8] if self.generator_profile == "none"
+                           else implementation_tag(self.impl))
+                    job_id = f"{JOB_PREFIX}q_{source['task']}_{source['episode']}_{tag}"
                     job = {"id": job_id, "index": -1, "family": work.family, "task": source["task"],
                            "input": source["input"], "episode": source["episode"], "stage": "validate",
                            "tier": "baseline", "num_demos": 1, "max_attempts": 2, "seed": 2_000_000, "ranges": {},
+                           **self.profile_field(),
                            "output_dir": str(Path(source["task"]) / job_id / Path(source["input"]).name)}
                     work.active[job["id"]] = job
                     return ("job", work, job)
                 if work.active:
                     continue
+                self.record_grasp_groups(work)
                 self.say(work, f"qualified {len(work.qualified)}/{len(work.sources)} humans"
                                + (f"; not qualified: {', '.join(label(k) for k in sorted(work.failed))}"
                                   if work.failed else ""))
@@ -699,6 +843,8 @@ class Pipeline:
         if job["stage"] == "validate":
             ok = bool(result["accepted"]) and not result["errors"]
             (work.qualified if ok else work.failed).add(key)
+            if ok:
+                work.validations[key] = result
         else:
             work.results[key].append(result)
             work.rows += rows
@@ -724,7 +870,8 @@ class Pipeline:
                   "generation_mode": "single_source", "generation_version": GENERATION_VERSION,
                   "qualified_human_sources": len(work.qualified),
                   "qualified_sources": [{"input": k[0], "episode": k[1]} for k in sorted(work.qualified)],
-                  "generated_per_parent": dict(sorted(parents.items()))}
+                  "generated_per_parent": dict(sorted(parents.items())),
+                  "candidate_tier_shortfall": work.tier_shortfall}
         output = self.roots["pools"] / work.name
         export(output, selected, report)
         manifest = verify_pool(output, self.count)
@@ -740,7 +887,7 @@ class Pipeline:
             self.status.session(work, status="processing_cameras", gpu=gpu)
             process_one(work.name, self.roots["collected"], self.roots["generated"], self.roots["training"],
                         self.roots["cache"], count=self.count, collected_count=self.collected_count,
-                        device=f"cuda:{gpu}")
+                        device=f"cuda:{gpu}", write_workers=self.write_workers)
         self.verify_training(work, manifest)
         pps = self.roots["pps"] / work.name
         if not pps.exists():

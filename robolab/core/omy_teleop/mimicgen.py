@@ -8,6 +8,7 @@ teleoperation HDF5 contract. See docs/omy_mimicgen.md.
 
 import argparse
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -23,7 +24,7 @@ GRASP_SIGNAL = "grasp"
 LOCKED_JOINT = "panda_joint3"
 MAX_JOINT_STEP = 0.5
 
-from .mimic_sources import STRATEGIES, checksum, source_references, source_record, trajectory_rng
+from .mimic_sources import STRATEGIES, checksum, source_references, trajectory_rng
 
 
 def build_parser():
@@ -41,6 +42,14 @@ def build_parser():
     parser.add_argument("--fixed-source-index", type=int, help="Force one pool source for qualification or a single-source baseline")
     parser.add_argument("--trial-manifest", help="JSON trials list with fixed ids and scene seeds for paired comparisons")
     parser.add_argument("--follow-source-schedule", action="store_true", help="Use each trial's predetermined source_index as the baseline")
+    parser.add_argument("--select-source-per-subtask", action="store_true",
+                        help="Choose the placement segment's source separately from the grasp segment's. A fixed or "
+                             "scheduled source then applies to the grasp only; a trial's placement_source_index, "
+                             "if given, fixes the placement source.")
+    parser.add_argument("--target-manifest",
+                        help="JSON targets list giving start poses by asset name; the scene, task and success "
+                             "rule still come from the target or first input recording. Requires --target-id.")
+    parser.add_argument("--target-id", help="Row of --target-manifest to generate at")
     parser.add_argument("--output-dir", help="New run directory; an existing nonempty directory is refused.")
     parser.add_argument("--num-demos", type=int, default=40, help="Successful demonstrations to generate.")
     parser.add_argument("--max-attempts", type=int, default=200)
@@ -69,6 +78,8 @@ def build_parser():
                              "avoids Isaac Sim 5.0 plugin-teardown crashes.")
     from .preparation import add_arguments
     add_arguments(parser)
+    from .repairs import add_arguments as add_repair_arguments
+    add_repair_arguments(parser)
     return parser
 
 
@@ -86,6 +97,18 @@ def validate_args(parser, args):
         parser.error("--nn-k must be positive and source index nonnegative")
     if args.follow_source_schedule and not args.trial_manifest:
         parser.error("--follow-source-schedule requires --trial-manifest")
+    if (args.target_manifest is None) != (args.target_id is None):
+        parser.error("--target-manifest and --target-id must be given together")
+    if args.target_manifest is not None:
+        if not args.no_randomize:
+            parser.error("--target-manifest places the scene exactly; it requires --no-randomize")
+        if not Path(args.target_manifest).is_file():
+            parser.error(f"{args.target_manifest} does not exist")
+    from .repairs import settings_from_args
+    try:
+        args.repairs = settings_from_args(args)
+    except ValueError as error:
+        parser.error(str(error))
     if args.source_selection and args.episodes is not None:
         parser.error("Use either --source-selection or --episodes")
     if args.episodes and len(args.input) != 1:
@@ -134,6 +157,87 @@ def source_arrays(episode, object_name, container_name):
     }
 
 
+def target_poses(manifest, target_id, required):
+    """Start poses of one explicit target, by asset name, and its manifest row.
+
+    A manifest is ``{"targets": [{"id": ..., "poses": {name: [x, y, z, qw, qx, qy, qz]}}]}``.
+    Scene preparation re-seats heights on the table, so z need only be near it.
+    """
+    rows = [row for row in json.loads(Path(manifest).read_text())["targets"] if row.get("id") == target_id]
+    if len(rows) != 1:
+        raise ValueError(f"{manifest} has {len(rows)} targets with id {target_id!r}; expected one")
+    poses = rows[0].get("poses") or {}
+    missing = sorted(set(required) - set(poses))
+    if missing:
+        raise ValueError(f"Target {target_id!r} has no pose for {missing}")
+    for name, pose in poses.items():
+        pose = np.asarray(pose, dtype=float)
+        if pose.shape != (7,) or not np.isfinite(pose).all() or np.linalg.norm(pose[3:]) < 1e-8:
+            raise ValueError(f"Target {target_id!r} pose of {name} must be 7 finite values with a nonzero quaternion")
+    return {name: [float(v) for v in pose] for name, pose in poses.items()}, rows[0]
+
+
+def execute_trial(generator, subtask_count, boundaries, seed, step, *, forced=None, later=None, per_subtask=False,
+                  timing=None, interpolate=None):
+    """Generate and execute one trial's subtask segments.
+
+    ``forced`` fixes the first segment's source (None: the generator selects).
+    Without ``per_subtask`` that source is kept for every segment, as Isaac Lab
+    does by default. With it, the stored choice is replaced before each later
+    segment by ``later`` (None: the generator selects again); Isaac Lab then
+    selects only because the config's per-subtask flag is also set.
+    ``step(waypoint)`` executes one waypoint and returns whether the episode ended.
+    ``timing(start, target)``, if given, sets each connection's interpolation
+    steps from its 4x4 start and target poses; ``interpolate`` is Isaac Lab's
+    pose interpolation (see ``repairs.retime``).
+
+    Returns the executed segments (subtask, source, realized boundary), the last
+    executed waypoint, the step count and whether the episode ended.
+    """
+    selected, previous = {EEF: forced}, {EEF: None}
+    segments, waypoint, steps, ended = [], None, 0, False
+    for subtask in range(subtask_count):
+        if per_subtask and subtask > 0:
+            selected[EEF] = later
+        # The connection starts from the current hand pose, then from the previous segment's last target.
+        start = (generator.env.get_robot_eef_pose(env_ids=[0], eef_name=EEF)[0] if previous[EEF] is None
+                 else previous[EEF][-1].pose) if timing is not None else None
+        with trajectory_rng(seed + subtask * 100000):
+            previous[EEF] = generator.generate_trajectory(0, EEF, subtask, boundaries, {}, selected, previous)
+        # Nearest-neighbor strategies can return scalar tensors rather than ints.
+        source = int(selected[EEF])
+        segment = {"subtask": subtask, "source": source,
+                   "boundary": [int(v) for v in boundaries[EEF][source, subtask]]}
+        if timing is not None:
+            from .repairs import retime
+            fixed = generator.env_cfg.subtask_configs[EEF][subtask].num_interpolation_steps
+            target = previous[EEF][fixed].pose
+            chosen = timing(start, target)
+            previous[EEF] = retime(previous[EEF], start, fixed, chosen, interpolate)
+            segment.update(interpolation_steps=int(chosen), connection_m=round(float(
+                (target[:3, 3] - start[:3, 3]).norm()), 4))
+        segments.append(segment)
+        for waypoint in previous[EEF]:
+            steps += 1
+            if step(waypoint):
+                ended = True
+                break
+        if ended:
+            break
+    return segments, waypoint, steps, ended
+
+
+def trial_lineage(segments, sources):
+    """Parent record of an attempt; the single-parent fields are None when parents differ."""
+    parents = [segment["source"] for segment in segments]
+    single = len(set(parents)) == 1
+    return {"source": parents[0] if single else None,
+            "source_reference": sources[parents[0]] if single else None,
+            "sources_by_subtask": parents,
+            "source_references_by_subtask": [sources[index] for index in parents],
+            "segments": segments}
+
+
 def teleop_args(task, recorded):
     """Teleoperation options that reproduce the recorded control and physics contract."""
     options = ["--task", task, "--record", "--no-realtime",
@@ -180,6 +284,24 @@ def mimic_env_class():
             pose = robot.data.body_link_pose_w[:, self._mimic_body]
             return math_utils.subtract_frame_transforms(
                 robot.data.root_pos_w, robot.data.root_quat_w, pose[:, :3], pose[:, 3:7])
+
+        def get_object_poses(self, env_ids=None):
+            """Reference poses for generation; a symmetric object's heading becomes its bearing (see repairs)."""
+            poses = super().get_object_poses(env_ids)
+            for name in getattr(self, "mimic_symmetric", ()):
+                rotation = poses[name][..., :3, :3]
+                # The robot root is the unrotated environment origin, so bearings are taken about it.
+                heading = getattr(self, "mimic_heading_rad", None)
+                bearing = (torch.atan2(poses[name][..., 1, 3], poses[name][..., 0, 3]) if heading is None
+                           else torch.full_like(poses[name][..., 0, 3], heading))
+                yaw = torch.atan2(rotation[..., 1, 0], rotation[..., 0, 0]) - bearing
+                c, s = torch.cos(-yaw), torch.sin(-yaw)
+                zero, one = torch.zeros_like(c), torch.ones_like(c)
+                turn = torch.stack((torch.stack((c, -s, zero), -1), torch.stack((s, c, zero), -1),
+                                    torch.stack((zero, zero, one), -1)), -2)
+                poses[name] = poses[name].clone()
+                poses[name][..., :3, :3] = turn @ rotation
+            return poses
 
         def get_robot_eef_pose(self, eef_name, env_ids=None):
             pos, quat = self._mimic_eef()
@@ -247,7 +369,9 @@ def mimic_cfg(cfg, object_name, container_name, args):
     cfg.__class__ = type(f"{type(cfg).__name__}Mimic", (type(cfg), MimicEnvCfg), {})
     cfg.datagen_config = DataGenConfig(
         name=args.task, seed=args.seed, generation_num_trials=args.num_demos,
-        generation_keep_failed=args.keep_failed, generation_select_src_per_subtask=False,
+        generation_keep_failed=args.keep_failed,
+        # The per-arm flag stays False: setting it would also override fixed and scheduled sources.
+        generation_select_src_per_subtask=bool(getattr(args, "select_source_per_subtask", False)),
         generation_transform_first_robot_pose=False, generation_interpolate_from_last_target_pose=True,
     )
     common = dict(selection_strategy=args.selection_strategy,
@@ -271,7 +395,7 @@ def pose_recorder_cfg():
     return RecorderTermCfg(class_type=MimicPoseRecorder)
 
 
-def load_sources(env, pool, references, object_name, container_name):
+def load_sources(env, pool, references, object_name, container_name, repairs=None, geometry=None):
     """Add the successful recorded episodes, or only ``episodes``, to the pool; return their provenance."""
     import asyncio
 
@@ -299,23 +423,41 @@ def load_sources(env, pool, references, object_name, container_name):
             tree = read_group_tree(group)
         arrays = source_arrays(tree, object_name, container_name)
         actions, joints = arrays["actions"], arrays["joint_position"]
+        raw_object = arrays["object_pose"][object_name]
+        if repairs is not None and repairs.symmetric_yaw:
+            from .repairs import bearing_reference, heading_reference
+            # With a fixed offset the source heading is removed; the target's becomes the offset.
+            arrays["object_pose"][object_name] = (bearing_reference(raw_object) if repairs.object_yaw_offset_deg is None
+                                                  else heading_reference(raw_object, 0.0))
         if not np.allclose(actions[:, locked], home, atol=1e-4):
             raise ValueError(f"{path}:{name} commands {LOCKED_JOINT}; six-axis IK cannot reproduce it")
         commanded = joints.copy()
         commanded[:, arm_ids] = actions[:, :len(ARM_JOINTS)]
         signal = torch.arange(len(actions), device=env.device) >= arrays["grasp"]
+        eef = env.fk(joints)
+        extra = {}
+        if repairs is not None and repairs.boundaries:
+            from .repairs import source_cuts
+            try:
+                # The pool's grasp segment ends one step after the signal rises.
+                extra["cuts"] = source_cuts(actions, eef[:, :3, 3].cpu().numpy(), raw_object,
+                                            arrays["object_pose"][container_name], arrays["grasp"] + 1,
+                                            geometry, repairs)
+            except ValueError as error:
+                raise ValueError(f"{path}:{name}: {error}") from None
         episode = EpisodeData()
         episode.data = {
             "actions": torch.as_tensor(actions, device=env.device),
             "obs": {"datagen_info": {
-                "eef_pose": {EEF: env.fk(joints)},
+                "eef_pose": {EEF: eef},
                 "target_eef_pose": {EEF: env.fk(commanded)},
                 "object_pose": {key: poses(value) for key, value in arrays["object_pose"].items()},
                 "subtask_term_signals": {GRASP_SIGNAL: signal},
             }},
         }
         asyncio.run(pool.add_episode(episode))
-        sources.append({**reference, "file": path, "episode": name, "steps": len(actions), "grasp": arrays["grasp"]})
+        sources.append({**reference, "file": path, "episode": name, "steps": len(actions), "grasp": arrays["grasp"],
+                        **extra})
     if not sources:
         raise ValueError("no successful source demonstrations were found")
     return sources
@@ -404,6 +546,18 @@ def run(args):
         success = cfg.terminations.success.params
         object_name = args.object or success["object"]
         container_name = args.container or success["container"]
+        target = None
+        if args.target_manifest is not None:
+            poses, row = target_poses(args.target_manifest, args.target_id, (object_name, container_name))
+            unknown = sorted(name for name in poses if getattr(cfg.scene, name, None) is None)
+            if unknown:
+                raise ValueError(f"Target {args.target_id!r} names assets absent from {args.task}: {unknown}")
+            for name, pose in poses.items():
+                asset = getattr(cfg.scene, name)
+                asset.init_state.pos, asset.init_state.rot = tuple(pose[:3]), tuple(pose[3:])
+            target = {"id": args.target_id, "manifest": str(Path(args.target_manifest).resolve()),
+                      "manifest_sha256": checksum(args.target_manifest), "poses": poses,
+                      **{k: v for k, v in row.items() if k not in ("id", "poses")}}
         mimic_cfg(cfg, object_name, container_name, args)
         pose_range, object_pose_range = (
             {"x": (-xy, xy), "y": (-xy, xy), "yaw": (-yaw, yaw)}
@@ -434,11 +588,23 @@ def run(args):
             recorder.set_hdf5_file("omy_demos")
             env.reset(seed=args.seed)
             pool = DataGenInfoPool(env, cfg, env.device)
-            sources = load_sources(env, pool, references, object_name, container_name)
+            repairs, geometry = args.repairs, None
+            if repairs.boundaries:
+                from .repairs import placement_geometry
+                from .target_sampler import scene_geometry
+                bounds = scene_geometry(cfg.scene.scene.spawn.usd_path, (object_name, container_name))
+                geometry = placement_geometry(bounds[object_name], bounds[container_name])
+            sources = load_sources(env, pool, references, object_name, container_name, repairs, geometry)
+            if repairs.symmetric_yaw:
+                env.mimic_symmetric = (object_name,)
+                if repairs.object_yaw_offset_deg is not None:
+                    env.mimic_heading_rad = math.radians(repairs.object_yaw_offset_deg)
             robot = env.scene["robot"]
             arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
             recorder.set_dataset_attrs({**source_attrs, "robolab_omy_mimicgen": json.dumps({
-                "schema_version": 1, "sources": sources, "seed": args.seed,
+                # 2: per-subtask parents in attempt and episode records, optional explicit target.
+                "schema_version": 2, "sources": sources, "seed": args.seed,
+                "select_source_per_subtask": args.select_source_per_subtask, "target": target,
                 "task_source": resolution.metadata(), "task_source_difference": task_source_difference,
                 "selection_strategy": args.selection_strategy, "selection_seed": args.selection_seed,
                 "nn_k": min(args.nn_k, len(sources)), "fixed_source_index": args.fixed_source_index,
@@ -453,8 +619,23 @@ def run(args):
                 "action_noise": args.action_noise, "interpolation_s": args.interpolation_s,
                 "synthetic": True, "task_dirs": source_meta.get("task_dirs"),
                 "preparation": cfg.omy_preparation,
+                **({"repairs": {**repairs.metadata(), "geometry": geometry}} if repairs.active else {}),
             })})
             generator = DataGenerator(env=env, src_demo_datagen_info_pool=pool)
+            timing = interpolate = None
+            if repairs.connection_speed_m_s is not None:
+                import isaaclab.utils.math as math_utils
+
+                from .repairs import connection_steps
+                minimum = cfg.subtask_configs[EEF][0].num_interpolation_steps
+                hz = 1.0 / env.step_dt
+
+                def timing(start, target):
+                    return connection_steps(start.cpu().numpy(), target.cpu().numpy(), minimum,
+                                            repairs.connection_speed_m_s, repairs.connection_rate_rad_s, hz)
+
+                def interpolate(start, target, steps):
+                    return math_utils.interpolate_poses(pose_1=start, pose_2=target, num_steps=steps)[0]
             print(f"Task: {cfg.instruction}\nOutput: {output}\nSource demonstrations: {len(sources)}", flush=True)
             successes = 0
             settle_steps = round(args.settle_s / env.step_dt)
@@ -476,7 +657,7 @@ def run(args):
                               "prepared_initial_poses": initial_poses}
                 if prepared["status"] != "ready":
                     results.append({**trial_info, "seed": seed, "success": False, "steps": 0, "source": None,
-                                    "demo": None, "preparation": prepared})
+                                    "sources_by_subtask": [], "demo": None, "preparation": prepared})
                     print(f"Attempt {len(results)}: setup rejected: {prepared['reasons']}", flush=True)
                     if args.no_randomize and any("Cannot prepare layout:" in reason for reason in prepared["reasons"]):
                         break
@@ -487,22 +668,30 @@ def run(args):
                 recorder.set_episode_preparation(prepared, env_ids=[0])
                 with trajectory_rng(args.selection_seed + trial_index):
                     boundaries = generator.randomize_subtask_boundaries()
+                if repairs.boundaries:
+                    from .repairs import edit_boundaries
+                    boundaries[EEF] = edit_boundaries(boundaries[EEF], pool.subtask_boundaries[EEF],
+                                                      [source["cuts"] for source in sources], repairs)
                 fixed_source = int(trial["source_index"]) if args.follow_source_schedule else args.fixed_source_index
-                if fixed_source is not None and not 0 <= fixed_source < len(sources):
+                placement_source = trial.get("placement_source_index")
+                if placement_source is not None:
+                    if not args.select_source_per_subtask:
+                        raise ValueError("Trial placement_source_index requires --select-source-per-subtask")
+                    placement_source = int(placement_source)
+                if any(index is not None and not 0 <= index < len(sources)
+                       for index in (fixed_source, placement_source)):
                     raise ValueError("Scheduled source index exceeds the pool")
-                selected, previous = {EEF: fixed_source}, {EEF: None}
-                steps = 0
-                for subtask in range(len(cfg.subtask_configs[EEF])):
-                    with trajectory_rng(args.selection_seed + trial_index + subtask * 100000):
-                        previous[EEF] = generator.generate_trajectory(0, EEF, subtask, boundaries, {}, selected, previous)
-                    for waypoint in previous[EEF]:
-                        env.step(env.target_eef_pose_to_action(
-                            {EEF: waypoint.pose}, {EEF: waypoint.gripper_action}, {EEF: waypoint.noise}))
-                        steps += 1
-                        if env.all_terminated:
-                            break
-                    if env.all_terminated:
-                        break
+
+                def execute(waypoint):
+                    env.step(env.target_eef_pose_to_action(
+                        {EEF: waypoint.pose}, {EEF: waypoint.gripper_action}, {EEF: waypoint.noise}))
+                    return bool(env.all_terminated)
+
+                segments, waypoint, steps, _ = execute_trial(
+                    generator, len(cfg.subtask_configs[EEF]), boundaries, args.selection_seed + trial_index, execute,
+                    forced=fixed_source, later=placement_source, per_subtask=args.select_source_per_subtask,
+                    timing=timing, interpolate=interpolate)
+                lineage = trial_lineage(segments, sources)
                 # Recordings stop at success, leaving the release no margin; hold the final target.
                 for _ in range(settle_steps):
                     if env.all_terminated:
@@ -514,7 +703,7 @@ def run(args):
                 successes += succeeded
                 # The attempt is over, so forward kinematics may move the robot. See quality.py for the consumers.
                 position_error, rotation_error = env.ik_errors()
-                results.append({**trial_info, **source_record(selected[EEF], sources),
+                results.append({**trial_info, **lineage,
                                 "seed": seed, "success": succeeded, "steps": steps,
                                 "preparation": prepared,
                                 "demo": f"demo_{index}" if succeeded or args.keep_failed else None,
@@ -523,7 +712,8 @@ def run(args):
                                     {key: event[key] for key in ("step", "name", "info")}
                                     for event in tracker.get_events(0)]})
                 print(f"Attempt {len(results)}: {'success' if succeeded else 'failure'} after {steps} steps "
-                      f"(source {selected[EEF]}); {successes}/{args.num_demos} generated.", flush=True)
+                      f"(source {'/'.join(map(str, lineage['sources_by_subtask']))}); "
+                      f"{successes}/{args.num_demos} generated.", flush=True)
                 # Preserve diagnostics after every completed attempt, including interrupted runs.
                 (output / "mimicgen_summary.json").write_text(json.dumps({
                     "successes": successes, "attempts": results,
@@ -547,9 +737,13 @@ def run(args):
                             if name is not None and name in stream["data"]:
                                 stream["data"][name].attrs["mimicgen_source"] = json.dumps({
                                     "source_index": attempt["source"], "source": attempt.get("source_reference"),
+                                    "parents": attempt["sources_by_subtask"],
+                                    "parent_sources": attempt["source_references_by_subtask"],
+                                    "segments": attempt["segments"],
                                     "strategy": args.selection_strategy, "selection_seed": attempt["selection_seed"],
                                     "trial_id": attempt["trial_id"], "target_input": str(first.resolve()),
-                                    "target_episode": args.target_episode})
+                                    "target_episode": args.target_episode,
+                                    "target_id": None if target is None else target["id"]})
                 (output / "generation_finalized.json").write_text(json.dumps({
                     "recording_closed": True, "attempts": len(results),
                     "successes": sum(result["success"] for result in results),

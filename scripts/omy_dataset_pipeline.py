@@ -12,8 +12,10 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from robolab.core.omy_postprocess.automatic_dataset import WRITE_WORKERS  # noqa: E402
 from robolab.core.omy_teleop.gpu_pool import resolve_gpu_pool  # noqa: E402
 from robolab.core.omy_teleop.pipeline import STOP_AFTER, Pipeline  # noqa: E402
+from robolab.core.omy_teleop.repairs import GENERATOR_PROFILES  # noqa: E402
 
 
 def sessions_in(collected):
@@ -41,7 +43,12 @@ def main(argv=None):
                         help="Generation attempt budget per qualified human")
     parser.add_argument("--candidate-factor", type=float, default=1.5,
                         help="Candidates to generate per human, as a multiple of its share of generated slots")
+    parser.add_argument("--write-workers", type=int, default=WRITE_WORKERS,
+                        help="Processes writing training episodes while rendering continues; 0 writes in-process")
     parser.add_argument("--stop-after", choices=STOP_AFTER)
+    parser.add_argument("--generator-profile", default="none", choices=sorted(GENERATOR_PROFILES),
+                        help="Motion-repair flags passed to every generation job (see repairs.GENERATOR_PROFILES); "
+                             "a generated root holds one profile")
     parser.add_argument("--dry-run", action="store_true",
                         help="Verify and select from existing candidates only; start no Isaac process, write nothing")
     parser.add_argument("--reverify", action="store_true",
@@ -51,6 +58,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.count < 1 or (args.collected_count is not None and not 0 <= args.collected_count <= args.count):
         parser.error("Invalid --count or --collected-count")
+    if args.write_workers < 0:
+        parser.error("--write-workers must be nonnegative")
     if args.max_attempts_per_source < 1 or args.candidate_factor < 1:
         parser.error("--max-attempts-per-source must be positive and --candidate-factor at least 1")
     roots = {name: getattr(args, f"{name}_root").resolve()
@@ -74,7 +83,8 @@ def main(argv=None):
                         max_attempts_per_source=args.max_attempts_per_source,
                         candidate_factor=args.candidate_factor, dry_run=args.dry_run,
                         stop_after=args.stop_after, replace_invalid=args.replace_invalid,
-                        reverify=args.reverify)
+                        reverify=args.reverify, write_workers=args.write_workers,
+                        generator_profile=args.generator_profile)
     return pipeline.run(sessions)
 
 
