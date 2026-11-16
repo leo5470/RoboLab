@@ -41,11 +41,11 @@ def main() -> None:
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     for key in args.objects:
         obj = objects.get(key)
-        paths = {run: root / "gdg" / run / f"grasp_{'guess' if run == 'guess' else 'sim'}_data" / GRIPPER_DIR / f"{obj.key}.yaml"
+        yamls = {run: root / "gdg" / run / f"grasp_{'guess' if run == 'guess' else 'sim'}_data" / GRIPPER_DIR / f"{obj.key}.yaml"
                  for run in ("guess", "sim_mass", "sim_1g")}
-        guess = library.parse_isaac_grasp_yaml(paths["guess"])
-        mass = library.parse_isaac_grasp_yaml(paths["sim_mass"])
-        one_g = library.parse_isaac_grasp_yaml(paths["sim_1g"])
+        guess = library.parse_isaac_grasp_yaml(yamls["guess"])
+        mass = library.parse_isaac_grasp_yaml(yamls["sim_mass"])
+        one_g = library.parse_isaac_grasp_yaml(yamls["sim_1g"])
         passed_1g_names = set(one_g["names"][one_g["confidence"] > 0].tolist())
         passed_1g = np.array([n in passed_1g_names for n in mass["names"]])
         lib = library.build(mass, T_gdg_droid, also_passed={"1g": passed_1g})
