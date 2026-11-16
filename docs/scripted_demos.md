@@ -101,6 +101,26 @@ unsure marks with notes go to `<family>/review.json`. The page polls every 15 s,
 collection appear without a reload; files are opened read-only and without HDF5 locking, so the viewer never blocks
 a writer.
 
+## As MimicGen sources
+
+Each recorded episode also stores `pre_action_state/` (not read by PPS): the robot's full joint vector and the object
+and bin root poses before every action, in Isaac Lab's recorder layout, plus the joint order. With it, a scripted
+episode is a MimicGen source of kind `"scripted"` (`robolab/core/scripted_demos/mimic_source.py`, registered in
+`robolab/core/omy_teleop/mimic_sources.SOURCE_READERS`; see docs/omy_mimicgen.md, "Source kinds"). It reads back as
+the same `SourceEpisode` a teleoperation recording of the same motion gives: actions with the gripper in the
+generator's +1 open / -1 closed convention, and the grasp step defined the same way (gripper closed, object 2 cm up).
+A source reference is `{"file": "<family>/pps.hdf5", "episode": "episode_000012", "kind": "scripted"}`, for example
+in a path-screen `--sources` file. Episodes collected before the state group existed are refused; collect them again.
+
+Two differences from teleoperation sources are not resolved by reading them:
+
+- **`panda_joint3`.** The generator holds it at home (the OMY leader has six axes) and refuses sources that move it;
+  scripted episodes move all seven joints (D1, D2). Replaying the stored plans of the 53 scripted and 50 MimicGen
+  pitcher episodes through the command emulation with joint 3 held at home, 51/53 and 40/50 still converge (failures
+  at pregrasp and preplace), and every grasp id keeps at least one converging episode.
+- **Environment.** Scripted episodes are recorded in the stock DROID joint-position env (R2); the generator runs in
+  the OMY teleoperation env and compares each source's env contract with the target's.
+
 ## Batch objects
 
 Pitcher (303), mug (301), utilityjug_a01 (283), utilityjug_a02 (284), milkjug_a01 (230), milkjug_a02 (231) and

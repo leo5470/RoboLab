@@ -232,6 +232,7 @@ def read_teleop_episode(path, episode, object_name, container_name):
 # "kind" is a teleoperation (or teleoperation-format MimicGen) recording.
 SOURCE_READERS = {
     "teleop": read_teleop_episode,
+    "scripted": "robolab.core.scripted_demos.mimic_source:read_episode",  # docs/scripted_demos.md
 }
 
 

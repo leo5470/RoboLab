@@ -16,6 +16,9 @@ import numpy as np
 
 FPS = 15
 IMAGE_KEYS = ("exterior_image_1_left", "wrist_image_left")
+# Per-episode group of the scene before each action (not read by PPS); makes the episode a MimicGen source
+# (robolab/core/scripted_demos/mimic_source.py).
+STATE_GROUP = "pre_action_state"
 
 
 @dataclasses.dataclass
@@ -31,8 +34,21 @@ class EpisodeBuffer:
     normalized_gripper_position: list = dataclasses.field(default_factory=list)
     source_sim_before_s: list = dataclasses.field(default_factory=list)
     source_sim_origin_s: float = 0.0
+    # Scene before each action, for use as a MimicGen source: "<kind>/<name>/<field>" -> rows, in the layout of Isaac
+    # Lab's recorder state ("articulation/robot/joint_position", "rigid_object/<name>/root_pose"); see STATE_GROUP.
+    state: dict = dataclasses.field(default_factory=dict)
+    joint_names: tuple | None = None
 
-    def add(self, request: dict, action: np.ndarray, raw_finger: float, sim_time: float) -> None:
+    def add(self, request: dict, action: np.ndarray, raw_finger: float, sim_time: float,
+            state: dict | None = None, joint_names: tuple | None = None) -> None:
+        if state is not None:
+            if len(self) and set(state) != set(self.state):
+                raise ValueError("pre-action state must cover the same entries on every row")
+            for key, value in state.items():
+                self.state.setdefault(key, []).append(np.asarray(value))
+            self.joint_names = joint_names or self.joint_names
+        elif self.state:
+            raise ValueError("pre-action state must be recorded on every row or none")
         self.joint_position.append(np.asarray(request["observation/joint_position"], dtype=np.float32).reshape(7))
         self.gripper_position.append(np.asarray(request["observation/gripper_position"], dtype=np.float32).reshape(1))
         self.exterior_image_1_left.append(np.asarray(request["observation/exterior_image_1_left"], dtype=np.uint8))
@@ -61,6 +77,9 @@ class EpisodeBuffer:
             "timestamp": np.arange(n, dtype=np.float64) / FPS,
             "source_sim_before_s": np.asarray(self.source_sim_before_s, dtype=np.float64),
             "source_sim_origin_s": np.full(n, self.source_sim_origin_s, dtype=np.float64),
+            **{f"{STATE_GROUP}/{key}": np.stack(rows).astype(np.float32) for key, rows in self.state.items()},
+            **({f"{STATE_GROUP}/articulation/robot/joint_names": np.array(self.joint_names, dtype="S")}
+               if self.state and self.joint_names else {}),
         }
 
 
