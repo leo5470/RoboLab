@@ -25,6 +25,8 @@ LOCKED_JOINT = "panda_joint3"
 MAX_JOINT_STEP = 0.5
 
 from .mimic_sources import STRATEGIES, checksum, source_references, trajectory_rng
+# Source reading lives in mimic_sources (one reader per source kind); re-exported for existing callers.
+from .mimic_sources import grasp_index, pre_action, read_source, source_arrays  # noqa: F401
 
 
 def build_parser():
@@ -125,36 +127,6 @@ def reset_poses(env, env_ids, pose_ranges):
 
     for index, (name, pose_range) in enumerate(pose_ranges.items()):
         reset_pose_uniform(env, env_ids, pose_range, {}, name, reset_to_default_otherwise=index == 0)
-
-
-def grasp_index(gripper_command, object_z, lift=0.02):
-    """First step at which the closed gripper has raised the object by ``lift`` meters."""
-    held = (np.asarray(gripper_command) < 0) & (np.asarray(object_z) - object_z[0] > lift)
-    if not held.any():
-        raise ValueError("the object is never lifted with the gripper closed")
-    return int(np.argmax(held))
-
-
-def pre_action(initial, states):
-    """Rows seen before each action: the initial state, then post-step state ``t - 1``."""
-    return np.concatenate((np.asarray(initial)[:1], np.asarray(states)[:-1]))
-
-
-def source_arrays(episode, object_name, container_name):
-    """Pre-action joints and reference poses of one recorded episode, as NumPy arrays."""
-    actions = np.asarray(episode["actions"])
-    initial, states = episode["initial_state"], episode["states"]
-    if len(states["articulation"]["robot"]["joint_position"]) != len(actions):
-        raise ValueError("recorded actions and states are not aligned")
-    poses = {name: pre_action(initial["rigid_object"][name]["root_pose"], states["rigid_object"][name]["root_pose"])
-             for name in (object_name, container_name)}
-    return {
-        "actions": actions,
-        "joint_position": pre_action(initial["articulation"]["robot"]["joint_position"],
-                                     states["articulation"]["robot"]["joint_position"]),
-        "object_pose": poses,
-        "grasp": grasp_index(actions[:, -1], poses[object_name][:, 2]),
-    }
 
 
 def target_poses(manifest, target_id, required):
@@ -396,15 +368,16 @@ def pose_recorder_cfg():
 
 
 def load_sources(env, pool, references, object_name, container_name, repairs=None, geometry=None):
-    """Add the successful recorded episodes, or only ``episodes``, to the pool; return their provenance."""
+    """Add the successful source episodes to the pool; return their provenance.
+
+    Each reference is read by the reader of its kind (``mimic_sources.read_source``), so teleoperation recordings and
+    other source kinds enter the pool through the same checks.
+    """
     import asyncio
 
-    import h5py
     import isaaclab.utils.math as math_utils
     import torch
     from isaaclab.utils.datasets import EpisodeData
-
-    from robolab.core.replay.materialize import episode_names, read_group_tree
 
     def poses(rows):
         rows = torch.as_tensor(rows, dtype=torch.float32, device=env.device)
@@ -416,12 +389,14 @@ def load_sources(env, pool, references, object_name, container_name, repairs=Non
     sources = []
     for reference in references:
         path, name = reference["file"], reference["episode"]
-        with h5py.File(path, "r") as file:
-            group = file["data"][name]
-            if not group.attrs.get("success", False):
-                raise ValueError(f"Source changed or unsuccessful: {path}:{name}")
-            tree = read_group_tree(group)
-        arrays = source_arrays(tree, object_name, container_name)
+        source = read_source(reference, object_name, container_name)
+        if not source.success:
+            raise ValueError(f"Source changed or unsuccessful: {path}:{name}")
+        if source.joint_names is not None and list(source.joint_names) != list(env.scene["robot"].joint_names):
+            raise ValueError(f"{path}:{name} records joints {list(source.joint_names)}, "
+                             f"not the generator robot's {list(env.scene['robot'].joint_names)}")
+        arrays = {"actions": source.actions, "joint_position": source.joint_position,
+                  "object_pose": dict(source.object_pose), "grasp": source.grasp}
         actions, joints = arrays["actions"], arrays["joint_position"]
         raw_object = arrays["object_pose"][object_name]
         if repairs is not None and repairs.symmetric_yaw:

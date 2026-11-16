@@ -23,9 +23,9 @@ import json
 import os
 from pathlib import Path
 
-import h5py
 import numpy as np
 
+from .mimic_sources import grasp_index, read_source  # noqa: F401  (grasp_index re-exported)
 from .quality import POSITION_LIMITS
 
 REPO = Path(__file__).resolve().parents[3]
@@ -139,28 +139,14 @@ class Arm:
         return best[1], best[2]
 
 
-def grasp_index(gripper_command, object_z, lift=0.02):
-    """First step at which the closed gripper has raised the object by ``lift`` meters (as the generator)."""
-    held = (np.asarray(gripper_command) < 0) & (np.asarray(object_z) - object_z[0] > lift)
-    if not held.any():
-        raise ValueError("the object is never lifted with the gripper closed")
-    return int(np.argmax(held))
-
-
-def load_source(path, episode, object_name, container_name, arm):
-    """Commanded hand poses, pre-action joints, first placement step (``grasp``) and reference poses of one source."""
-    with h5py.File(path, "r") as stream:
-        group = stream["data"][episode]
-        actions = np.asarray(group["actions"])
-        initial, states = group["initial_state"], group["states"]
-
-        def rows(kind, name, field):
-            return np.concatenate((np.asarray(initial[kind][name][field])[:1], np.asarray(states[kind][name][field])[:-1]))
-
-        joints = rows("articulation", "robot", "joint_position")[:, :len(ARM)]
-        poses = {name: rows("rigid_object", name, "root_pose") for name in (object_name, container_name)}
+def load_source(path, episode, object_name, container_name, arm, kind="teleop"):
+    """Commanded hand poses, pre-action joints, first placement step (``grasp``) and reference poses of one source,
+    read by the generator's reader for ``kind`` (``mimic_sources.read_source``)."""
+    source = read_source({"file": str(path), "episode": episode, "kind": kind}, object_name, container_name)
+    actions, poses = np.asarray(source.actions), source.object_pose
+    joints = np.asarray(source.joint_position)[:, :len(ARM)]
     # The generator's grasp segment includes the step that raises the signal, so placement starts one later.
-    grasp = grasp_index(actions[:, -1], poses[object_name][:, 2]) + 1
+    grasp = source.grasp + 1
     if not 0 < grasp < len(actions):
         raise ValueError("the grasp boundary leaves an empty segment")
     commanded = actions[:, :len(ARM)]
@@ -349,11 +335,16 @@ def _screen_target(job):
             "sources": pairs}
 
 
+def _load_all(sources, object_name, container_name, arm):
+    """``{key: (file, episode[, kind])}`` -> ``{key: load_source(...)}``."""
+    return {key: load_source(entry[0], entry[1], object_name, container_name, arm, *entry[2:])
+            for key, entry in sorted(sources.items())}
+
+
 def screen(manifest, sources, arm, stride=2, workers=1):
-    """Screen every target of a manifest against every source: ``{key: (file, episode)}``."""
+    """Screen every target of a manifest against every source: ``{key: (file, episode[, kind])}``."""
     object_name, container_name = manifest["sampler"]["profile"]["object"], manifest["sampler"]["profile"]["container"]
-    loaded = {key: load_source(path, episode, object_name, container_name, arm)
-              for key, (path, episode) in sorted(sources.items())}
+    loaded = _load_all(sources, object_name, container_name, arm)
     jobs = [(arm, loaded, target, object_name, container_name, stride) for target in manifest["targets"]]
     if workers > 1:
         from concurrent.futures import ProcessPoolExecutor
@@ -386,8 +377,7 @@ def rank(manifest, sources, arm, profile, workers=1):
     object_name, container_name = profile_["object"], profile_["container"]
     geometry = placement_geometry(manifest["geometry"][object_name], manifest["geometry"][container_name])
     settings = profile_settings(profile)
-    loaded = {key: load_source(path, episode, object_name, container_name, arm)
-              for key, (path, episode) in sorted(sources.items())}
+    loaded = _load_all(sources, object_name, container_name, arm)
     jobs = [(arm, loaded, target, object_name, container_name, geometry, settings) for target in manifest["targets"]]
     if workers > 1:
         from concurrent.futures import ProcessPoolExecutor
@@ -404,8 +394,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--manifest", type=Path, required=True, help="Target manifest from target_sampler")
     parser.add_argument("--sources", type=Path, required=True,
-                        help='JSON {"sources": [{"file": omy_demos.hdf5 | "input": recording dir, "episode": "demo_N"}]}: '
-                             "a --source-selection file or the pipeline's frozen sources.json")
+                        help='JSON {"sources": [{"file": omy_demos.hdf5 | "input": recording dir, "episode": "demo_N", '
+                             '"kind": "teleop" (default) | "scripted"}]}: a --source-selection file or the pipeline\'s '
+                             "frozen sources.json; scripted sources name a scripted-demo pps.hdf5 and its episode")
     parser.add_argument("--stride", type=int, default=2, help="Check every Nth step, plus the segment ends")
     parser.add_argument("--rank-profile",
                         help="Instead of the plain reachability screen, rank sources per target along the path "
@@ -418,7 +409,11 @@ def main(argv=None):
     sources = {}
     for row in references:
         file = Path(row["file"]) if row.get("file") else Path(row["input"]) / "omy_demos.hdf5"
-        sources[f"{file.parent.parent.name}:{row['episode']}"] = (str(file), row["episode"])
+        kind = row.get("kind", "teleop")
+        if kind == "teleop":
+            sources[f"{file.parent.parent.name}:{row['episode']}"] = (str(file), row["episode"])
+        else:  # a scripted family keeps all its episodes in <family>/pps.hdf5
+            sources[f"{file.parent.name}:{row['episode']}"] = (str(file), row["episode"], kind)
     if args.output.exists():
         parser.error(f"{args.output} exists; screen reports are frozen once written")
     if args.rank_profile:
@@ -437,8 +432,9 @@ def main(argv=None):
                          "position_m": POSITION_M, "rotation_rad": ROTATION_RAD, "stride": args.stride,
                          "joint_position_limits": [list(v) for v in POSITION_LIMITS]},
               "manifest": {"path": str(args.manifest.resolve()), "sha256": _sha256(args.manifest)},
-              "sources": [{"key": key, "file": str(Path(path).resolve()), "episode": episode, "sha256": _sha256(path)}
-                          for key, (path, episode) in sorted(sources.items())],
+              "sources": [{"key": key, "file": str(Path(entry[0]).resolve()), "episode": entry[1],
+                           **({"kind": entry[2]} if len(entry) > 2 else {}), "sha256": _sha256(entry[0])}
+                          for key, entry in sorted(sources.items())],
               "counts": counts, "targets": rows}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=1) + "\n")
