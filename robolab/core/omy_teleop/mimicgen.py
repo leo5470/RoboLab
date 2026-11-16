@@ -404,7 +404,9 @@ def load_sources(env, pool, references, object_name, container_name, repairs=Non
             # With a fixed offset the source heading is removed; the target's becomes the offset.
             arrays["object_pose"][object_name] = (bearing_reference(raw_object) if repairs.object_yaw_offset_deg is None
                                                   else heading_reference(raw_object, 0.0))
-        if not np.allclose(actions[:, locked], home, atol=1e-4):
+        # From the six-axis L100 a moving panda_joint3 means a broken recording. A seven-axis source moves it by
+        # design; only its end-effector poses are used, and IK still holds the joint at home.
+        if not source.seven_axis and not np.allclose(actions[:, locked], home, atol=1e-4):
             raise ValueError(f"{path}:{name} commands {LOCKED_JOINT}; six-axis IK cannot reproduce it")
         commanded = joints.copy()
         commanded[:, arm_ids] = actions[:, :len(ARM_JOINTS)]

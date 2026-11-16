@@ -112,12 +112,17 @@ generator's +1 open / -1 closed convention, and the grasp step defined the same 
 A source reference is `{"file": "<family>/pps.hdf5", "episode": "episode_000012", "kind": "scripted"}`, for example
 in a path-screen `--sources` file. Episodes collected before the state group existed are refused; collect them again.
 
-Two differences from teleoperation sources are not resolved by reading them:
+**`panda_joint3`.** Scripted episodes move all seven joints (D1, D2); the generator holds joint 3 at home because
+the OMY leader has six axes. The scripted reader marks its episodes `seven_axis`, so the generator accepts their
+joint-3 motion (it refuses it only from teleoperation sources) and follows their end-effector poses with six joints.
+Generated episodes therefore keep joint 3 at home even when the source moved it. Whether six joints reach a source's
+poses is checked by the path screen, which holds joint 3 at the episode's starting home value for these sources.
+Replaying the stored plans of the 53 scripted and 50 MimicGen pitcher episodes through the command emulation with
+joint 3 held at home, 51/53 and 40/50 still converge (failures at pregrasp and preplace), and every grasp id keeps at
+least one converging episode.
 
-- **`panda_joint3`.** The generator holds it at home (the OMY leader has six axes) and refuses sources that move it;
-  scripted episodes move all seven joints (D1, D2). Replaying the stored plans of the 53 scripted and 50 MimicGen
-  pitcher episodes through the command emulation with joint 3 held at home, 51/53 and 40/50 still converge (failures
-  at pregrasp and preplace), and every grasp id keeps at least one converging episode.
+One difference from teleoperation sources is not resolved by reading them:
+
 - **Environment.** Scripted episodes are recorded in the stock DROID joint-position env (R2); the generator runs in
   the OMY teleoperation env and compares each source's env contract with the target's.
 

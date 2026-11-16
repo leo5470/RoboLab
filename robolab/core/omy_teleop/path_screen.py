@@ -145,13 +145,19 @@ def load_source(path, episode, object_name, container_name, arm, kind="teleop"):
     source = read_source({"file": str(path), "episode": episode, "kind": kind}, object_name, container_name)
     actions, poses = np.asarray(source.actions), source.object_pose
     joints = np.asarray(source.joint_position)[:, :len(ARM)]
+    achieved = np.array([arm.fk(row) for row in joints])
+    if source.seven_axis:
+        # IK keeps the locked joint at its seed value. A seven-axis source moved it, so seed and start the screen with
+        # it at the episode's first (home) value, where the generator holds it.
+        joints = joints.copy()
+        joints[:, LOCKED] = joints[0, LOCKED]
     # The generator's grasp segment includes the step that raises the signal, so placement starts one later.
     grasp = source.grasp + 1
     if not 0 < grasp < len(actions):
         raise ValueError("the grasp boundary leaves an empty segment")
     commanded = actions[:, :len(ARM)]
     return {"hand": np.array([arm.fk(row) for row in commanded]), "joints": joints, "grasp": grasp,
-            "achieved": np.array([arm.fk(row) for row in joints]), "actions": actions,
+            "achieved": achieved, "actions": actions,
             "object_pose": poses[object_name], "container_pose": poses[container_name],
             "references": (pose_matrix(poses[object_name][0]), pose_matrix(poses[container_name][grasp])),
             "steps": len(actions)}
