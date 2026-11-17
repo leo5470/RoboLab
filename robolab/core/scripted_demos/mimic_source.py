@@ -4,10 +4,13 @@ A scripted family's ``pps.hdf5`` holds, per successful episode, the PPS rows and
 collector records (``writer.STATE_GROUP``): the robot's full joint vector and the object and bin root poses before
 each action, in Isaac Lab's recorder layout. Together they give the generator everything a teleoperation recording
 gives it. The PPS ``actions`` are the joint targets the arm was sent, with the gripper in the wire convention
-(0 open, 1 closed); the generator's convention is +1 open, -1 closed.
+(0 open, 1 closed); the generator's convention is +1 open, -1 closed. The source starts after the collector's settle
+phase (``settled_start``), with the objects at rest, as a teleoperation recording does.
 
-The scripted arm uses all seven joints, so its episodes are seven-axis sources (``SourceEpisode.seven_axis``): the
-generator accepts their ``panda_joint3`` motion and follows their end-effector poses with that joint held at home.
+By default the scripted arm uses all seven joints, so its episodes are seven-axis sources (``SourceEpisode.seven_axis``):
+the generator accepts their ``panda_joint3`` motion and follows their end-effector poses with that joint held at home.
+Episodes collected with ``--hold-joint3`` (episode attribute ``locked_joints``) held it at home themselves; they are
+read as six-axis sources, so the generator checks that they did, as it does for teleoperation recordings.
 
 Episodes collected before the state group existed cannot be read; collect them again.
 """
@@ -34,6 +37,20 @@ def generator_actions(wire_actions: np.ndarray) -> np.ndarray:
     actions = np.array(wire_actions, dtype=np.float32, copy=True)
     actions[:, 7] = 1.0 - 2.0 * actions[:, 7]
     return actions
+
+
+def settled_start(wire_actions: np.ndarray) -> int:
+    """First row a MimicGen source starts from: the last row of the collector's settle phase.
+
+    An episode begins with ``collect.Session.settle``: the arm held at its reset pose while the objects drop from
+    their authored, slightly airborne poses and come to rest. A teleoperation recording starts from objects already at
+    rest, and the generator takes the first row as the scene the motion is relative to (the reference for the grasp
+    segment and the 2 cm lift of ``grasp_index``). So the source starts at the last held row: arm still at home,
+    objects resting. Rows before it are the same arm command and carry no motion.
+    """
+    arm = np.asarray(wire_actions)[:, :7]
+    moving = np.flatnonzero(np.any(arm != arm[0], axis=1))
+    return max(int(moving[0]) - 1, 0) if len(moving) else 0
 
 
 def source_contract(path, episode) -> tuple[dict, str]:
@@ -76,9 +93,16 @@ def read_episode(path, episode, object_name, container_name) -> SourceEpisode:
         names = state.get("articulation/robot/joint_names")
         joint_names = tuple(n.decode() for n in names[()]) if names is not None else None
         success = bool(group.attrs.get("success", False))
+        locked = json.loads(group.attrs.get("locked_joints", "[]"))
     if not len(joints) == len(wire) == len(poses[object_name]) == len(poses[container_name]):
         raise ValueError(f"{path}:{episode}: actions and pre-action state are not aligned")
+    start = settled_start(wire)
+    z = poses[object_name][:, 2]
+    if start and abs(z[start] - z[start - 1]) > 1e-3:
+        raise ValueError(f"{path}:{episode}: the object is still moving when the arm starts (row {start})")
+    wire, joints = wire[start:], joints[start:]
+    poses = {name: rows[start:] for name, rows in poses.items()}
     actions = generator_actions(wire)
     return SourceEpisode(actions=actions, joint_position=joints, object_pose=poses,
                          grasp=grasp_index(actions[:, -1], poses[object_name][:, 2]), success=success,
-                         joint_names=joint_names, seven_axis=True)
+                         joint_names=joint_names, seven_axis="panda_joint3" not in locked)

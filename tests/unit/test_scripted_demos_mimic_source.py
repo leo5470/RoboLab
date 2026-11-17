@@ -1,6 +1,7 @@
 """Scripted episodes as MimicGen sources: the same motion recorded as a teleoperation recording and as a scripted
 episode reads back as the same SourceEpisode, for the generator and for the path screen."""
 
+import json
 import math
 
 import h5py
@@ -30,10 +31,21 @@ def _motion(joint3=0.0):
     return joints, wire, {OBJECT: obj, CONTAINER: bin_}
 
 
-def _scripted(path, with_state=True, joint3=0.0):
+def _settle(joints, wire, poses, drop):
+    """The collector's settle rows before the motion: arm held at its first command while the objects fall by
+    ``drop`` metres and come to rest (``collect.Session.settle``)."""
+    n = len(drop)
+    poses = {name: np.r_[np.repeat(rows[:1], n, 0), rows] for name, rows in poses.items()}
+    poses[OBJECT][:n, 2] += np.asarray(drop, dtype=np.float32)
+    return np.r_[np.repeat(joints[:1], n, 0), joints], np.r_[np.repeat(wire[:1], n, 0), wire], poses
+
+
+def _scripted(path, with_state=True, joint3=0.0, locked=(), drop=()):
     joints, wire, poses = _motion(joint3)
+    if len(drop):
+        joints, wire, poses = _settle(joints, wire, poses, drop)
     buf = EpisodeBuffer(source_sim_origin_s=0.0)
-    for t in range(STEPS):
+    for t in range(len(wire)):
         request = {"observation/joint_position": joints[t, :7], "observation/gripper_position": wire[t, 7:],
                    "observation/exterior_image_1_left": np.zeros((8, 8, 3), np.uint8),
                    "observation/wrist_image_left": np.zeros((8, 8, 3), np.uint8)}
@@ -41,7 +53,8 @@ def _scripted(path, with_state=True, joint3=0.0):
                  **{f"rigid_object/{name}/root_pose": rows[t] for name, rows in poses.items()}}
         buf.add(request, wire[t], raw_finger=0.0, sim_time=t / 15, state=state if with_state else None,
                 joint_names=JOINT_NAMES)
-    return Writer(path, task="SimplePnp303Pitcher", prompt="p").append(buf.arrays(), {"layout_task": "x"})
+    return Writer(path, task="SimplePnp303Pitcher", prompt="p").append(
+        buf.arrays(), {"layout_task": "x", **({"locked_joints": json.dumps(list(locked))} if locked else {})})
 
 
 def _teleop(path):
@@ -119,6 +132,36 @@ def test_path_screen_holds_joint3_at_home_for_seven_axis_sources(tmp_path):
     moved = np.array([arm.fk(row) for row in source.joint_position[:, :7]])
     assert np.array_equal(screened["achieved"], moved)
     assert np.array_equal(screened["hand"], np.array([arm.fk(row) for row in source.actions[:, :7]]))
+
+
+def test_episode_collected_with_joint3_held_is_a_six_axis_source(tmp_path):
+    """--hold-joint3 episodes record locked_joints: the generator then checks joint 3, as for teleoperation."""
+    held, free = tmp_path / "held" / "pps.hdf5", tmp_path / "free" / "pps.hdf5"
+    held.parent.mkdir(), free.parent.mkdir()
+    name = _scripted(held, locked=("panda_joint3",))
+    _scripted(free)
+    assert not read_source({"file": str(held), "episode": name, "kind": "scripted"}, OBJECT, CONTAINER).seven_axis
+    assert read_source({"file": str(free), "episode": name, "kind": "scripted"}, OBJECT, CONTAINER).seven_axis
+
+
+def test_settle_rows_are_not_part_of_the_source(tmp_path, files):
+    """Objects spawn slightly airborne and settle while the arm is held: the source starts at rest, as a teleoperation
+    recording does, so the motion is relative to the resting scene and the 2 cm lift is measured from it."""
+    path = tmp_path / "settled" / "pps.hdf5"
+    path.parent.mkdir()
+    name = _scripted(path, drop=[0.085, 0.04, 0.001, 0.0])
+    settled = read_source({"file": str(path), "episode": name, "kind": "scripted"}, OBJECT, CONTAINER)
+    teleop = read_source(files[1], OBJECT, CONTAINER)
+    assert np.array_equal(settled.actions, teleop.actions) and settled.grasp == teleop.grasp
+    for key in (OBJECT, CONTAINER):
+        assert np.array_equal(settled.object_pose[key], teleop.object_pose[key])
+
+
+def test_source_whose_objects_still_move_when_the_arm_starts_is_refused(tmp_path):
+    path = tmp_path / "pps.hdf5"
+    name = _scripted(path, drop=[0.085, 0.04])
+    with pytest.raises(ValueError, match="still moving"):
+        read_source({"file": str(path), "episode": name, "kind": "scripted"}, OBJECT, CONTAINER)
 
 
 def test_episode_without_state_is_refused(tmp_path):

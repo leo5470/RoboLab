@@ -78,17 +78,24 @@ class Session:
     """An env for one layout task of one batch object, plus everything needed to run attempts in it."""
 
     def __init__(self, obj: objects.BatchObject, layout: str, *, render: bool, robolab_output: pathlib.Path,
-                 library_path: pathlib.Path | None = None, events: dict | None = None):
+                 library_path: pathlib.Path | None = None, events: dict | None = None,
+                 locked_joints: tuple[str, ...] = ()):
+        """``locked_joints``: arm joints planning and execution hold at home (``Chain.locked``), e.g.
+        ``("panda_joint3",)`` for MimicGen sources that move the arm as the OMY generator's six-joint IK does."""
         sim.launch_app()
         from robolab.core.world.world_state import get_world
 
+        unknown = sorted(set(locked_joints) - set(sim.ARM_JOINTS))
+        if unknown:
+            raise ValueError(f"cannot lock {unknown}: not arm joints {sim.ARM_JOINTS}")
         self.obj, self.layout = obj, layout
         self.task = obj.task(layout)
         self.render = render
+        self.locked_joints = tuple(locked_joints)
         self.env, self.env_cfg = sim.make_env(self.task, robolab_output / self.task, render=render, events=events)
         self.world = get_world(self.env)
         root = objects.grasp_data_root()
-        self.chain = Chain.load(root / "robot_chain.npz")
+        self.chain = Chain.load(root / "robot_chain.npz").with_locked(sim.ARM_JOINTS.index(j) for j in locked_joints)
         self.ik = sim.ArmIK(self.env, self.chain)
         self.library_path = library_path or root / "library" / f"{obj.key}.npz"
         self.library = grasp_library.load(self.library_path)

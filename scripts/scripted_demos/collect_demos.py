@@ -96,6 +96,9 @@ def main() -> None:
     parser.add_argument("--give-up-after", type=int, default=12, help="skip a layout with no success in this many attempts")
     parser.add_argument("--videos", type=int, default=5)
     parser.add_argument("--qualified", action="store_true", help="draw only screened grasps (D9)")
+    parser.add_argument("--hold-joint3", action="store_true",
+                        help="plan and execute with panda_joint3 held at home, as the OMY MimicGen generator's six-joint "
+                             "IK does (MimicGen sources); screened grasps (--qualified) were screened with seven joints")
     parser.add_argument("--output", default=None, help="one object only; default: <scripted_demos>/<family>")
     args = parser.parse_args()
     if args.output and len(args.objects) > 1:
@@ -133,6 +136,7 @@ def collect_object(obj: objects.BatchObject, out_dir: pathlib.Path, args) -> Non
             "skipped": skipped, "candidates": candidates, "excluded_eval_layouts": list(objects.EVAL_LAYOUTS)}, indent=1))
     root = objects.grasp_data_root()
     lib_path = root / "library" / f"{obj.key}.npz"
+    locked = ("panda_joint3",) if args.hold_joint3 else ()
 
     writer = None
     videos_dir = out_dir / "videos"
@@ -153,7 +157,7 @@ def collect_object(obj: objects.BatchObject, out_dir: pathlib.Path, args) -> Non
             write_layouts()
             continue
         session = collect.Session(obj, layout, render=True, robolab_output=out_dir / "robolab_output",
-                                  library_path=lib_path)
+                                  library_path=lib_path, locked_joints=locked)
         if writer is None:
             writer = Writer(out_dir / "pps.hdf5", task=obj.family, prompt=session.instruction)
         allowed, select_params = None, None
@@ -182,7 +186,7 @@ def collect_object(obj: objects.BatchObject, out_dir: pathlib.Path, args) -> Non
                 name = writer.append(arrays, {
                     "layout_task": task, "source_family": task, "seed": seed, "grasp_id": plan["grasp_id"],
                     "plan": json.dumps(plan), "selection_rule": "qualified" if args.qualified else "top-k cost draw",
-                    "executor": json.dumps(result.executor)})
+                    "executor": json.dumps(result.executor), "locked_joints": json.dumps(list(locked))})
                 row["episode"] = name
                 have += 1
             rows.append(row)
@@ -205,7 +209,9 @@ def collect_object(obj: objects.BatchObject, out_dir: pathlib.Path, args) -> Non
         "draw": "qualified grasps (Phase 4b screening)" if args.qualified else "uniform over the top-k (k=8) cost-ranked feasible grasps",
         "registration": "stock auto_register_droid_envs(task_dirs=['single_pnp']), WRIST_LEFT cameras, 15 Hz",
         "conversion": "policies/pi0_family/client.py Pi0DroidJointposClient._extract_observation/_pack_request",
-        "constant_columns": "none: panda_joint3 is commanded freely (7-DoF IK)",
+        "constant_columns": ("panda_joint3 held at home (--hold-joint3: six-joint IK, as the OMY MimicGen generator)"
+                             if locked else "none: panda_joint3 is commanded freely (7-DoF IK)"),
+        "locked_joints": list(locked),
         "library": str(lib_path), "library_sha256": file_sha256(lib_path),
         "library_manifest_sha256": file_sha256(root / "library" / "manifest.json"),
         "code_revision": {"RoboLab": git_revision(objects.ROBOLAB_DIR)},
