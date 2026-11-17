@@ -14,11 +14,19 @@ Episodes collected before the state group existed cannot be read; collect them a
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import h5py
 import numpy as np
 
-from robolab.core.omy_teleop.mimic_sources import SourceEpisode, grasp_index
+from robolab.core.omy_teleop.mimic_sources import SourceEpisode, env_contract, grasp_index
+from robolab.core.omy_teleop.options import ARM_JOINTS
 from robolab.core.scripted_demos.writer import STATE_GROUP
+
+
+_NO_STATE = (f"{{path}}:{{episode}} has no {STATE_GROUP} group: it was collected before the scripted collector "
+             f"recorded the scene state, so it cannot be a MimicGen source; collect it again")
 
 
 def generator_actions(wire_actions: np.ndarray) -> np.ndarray:
@@ -28,12 +36,36 @@ def generator_actions(wire_actions: np.ndarray) -> np.ndarray:
     return actions
 
 
+def source_contract(path, episode) -> tuple[dict, str]:
+    """``(contract, task)`` of one scripted episode, for ``mimic_sources.source_references``.
+
+    The contract is read from the ``env_cfg.json`` RoboLab's recorder wrote for the episode's layout task when it was
+    collected (``<family>/robolab_output/<layout_task>/env_cfg.json``), in the fields of ``mimic_sources.contract``.
+    The joint order is the one recorded with the scene state, and the action description is that of the file's
+    ``actions`` (the reader converts the gripper encoding).
+    """
+    with h5py.File(path, "r") as stream:
+        group = stream["data"][episode]
+        if STATE_GROUP not in group:
+            raise ValueError(_NO_STATE.format(path=path, episode=episode))
+        task = group.attrs["layout_task"]
+        task = task.decode() if isinstance(task, bytes) else str(task)
+        names = group.get(f"{STATE_GROUP}/articulation/robot/joint_names")
+        joint_order = [n.decode() for n in names[()]] if names is not None else None
+    cfg_path = Path(path).parent / "robolab_output" / task / "env_cfg.json"
+    if not cfg_path.is_file():
+        raise ValueError(f"{path}:{episode}: no recorded environment configuration at {cfg_path}")
+    cfg = json.loads(cfg_path.read_text())
+    actions = {"action_type": "absolute_joint_position", "action_names": [*ARM_JOINTS, "gripper"], "joint_units": "rad",
+               "gripper_encoding": "0=open,1=closed", "control_hz": 1.0 / (cfg["sim"]["dt"] * cfg["decimation"])}
+    return env_contract(cfg, joint_order, actions), task
+
+
 def read_episode(path, episode, object_name, container_name) -> SourceEpisode:
     with h5py.File(path, "r") as stream:
         group = stream["data"][episode]
         if STATE_GROUP not in group:
-            raise ValueError(f"{path}:{episode} has no {STATE_GROUP} group: it was collected before the scripted "
-                             f"collector recorded the scene state, so it cannot be a MimicGen source; collect it again")
+            raise ValueError(_NO_STATE.format(path=path, episode=episode))
         state = group[STATE_GROUP]
         missing = [name for name in (object_name, container_name) if f"rigid_object/{name}/root_pose" not in state]
         if missing:

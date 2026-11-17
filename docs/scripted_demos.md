@@ -121,10 +121,31 @@ Replaying the stored plans of the 53 scripted and 50 MimicGen pitcher episodes t
 joint 3 held at home, 51/53 and 40/50 still converge (failures at pregrasp and preplace), and every grasp id keeps at
 least one converging episode.
 
-One difference from teleoperation sources is not resolved by reading them:
+**Environment.** Scripted episodes are recorded in the stock DROID joint-position env (R2), not the OMY
+teleoperation env the generator runs in. Their contract is read from the `env_cfg.json` RoboLab recorded for the
+episode's layout task (`<family>/robolab_output/<layout_task>/env_cfg.json`; keep it with `pps.hdf5`) and checked
+against the target where the generator reads a source (docs/omy_mimicgen.md, "Source kinds"); the other differences
+are recorded on the source reference. Against a milkjug_a01 teleoperation target they are simulation and render
+settings, the OMY profiles, and the gripper velocity limit: the OMY env limits the gripper to 5 rad/s in simulation,
+while the stock DROID configuration sets the legacy `velocity_limit` field that Isaac Lab 2.2 ignores for implicit
+actuators, so scripted episodes close the gripper faster. The target still needs a teleoperation recording of the
+task (environment, reset state, run attributes).
 
-- **Environment.** Scripted episodes are recorded in the stock DROID joint-position env (R2); the generator runs in
-  the OMY teleoperation env and compares each source's env contract with the target's.
+**Pilot (2026-11-17, milkjug_a01).** leocheng's `pilot_random` settings (target: teleoperation layout 00, episode 1;
+random source among 3 nearest; container ±1 cm, object ±2.5 cm / ±5°; seeds 12340 / 98760; 10 attempts), once with
+his 7 teleoperation sources and once with 7 scripted episodes from layouts 01-04, same code and GPU:
+
+| Sources | Successes | Largest IK error per attempt |
+|---|---|---|
+| teleoperation | 7/10 (10/10 on 2026-10-28, before `speed_source: "pose"`) | 7-85 mm |
+| scripted | 4/10 | 21-275 mm |
+
+Two causes, both from the arm, not the gripper: (1) with `panda_joint3` at home, 5 of the 7 scripted paths are not
+reachable at this target (CPU path screen: 128-225 mm in the placement segment); these are the episodes whose
+7-DoF IK moved joint 3 by 16-25°, while the two that moved it 10-11° are reachable, as are the teleoperation paths up
+to 78 mm. (2) With a reachable source the jug is pushed up to 10 mm before the gripper closes, so the six-joint arm
+reaching the scripted hand poses collides where the 7-DoF plan, checked for its own posture, did not. Next: collect
+scripted sources with joint 3 held at home so the source arm moves as the generator's does.
 
 ## Batch objects
 

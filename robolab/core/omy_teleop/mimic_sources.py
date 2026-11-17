@@ -9,6 +9,7 @@ import importlib
 import json
 from pathlib import Path
 import random
+import re
 
 import h5py
 import numpy as np
@@ -89,11 +90,8 @@ def contract_differences(expected, actual):
     return blocking, allowed
 
 
-def contract(run):
-    run = Path(run)
-    cfg = json.loads((run / "env_cfg.json").read_text())
-    with h5py.File(run / "omy_demos.hdf5") as stream:
-        meta = json.loads(stream["data"].attrs["robolab_omy_teleop"])
+def env_contract(cfg, joint_order=None, action_metadata=None):
+    """The contract fields of one recorded environment configuration (``env_cfg.json``)."""
     success = cfg["terminations"]["success"]
     objects = success["params"]
     return {"sim": cfg["sim"], "decimation": cfg["decimation"], "actions": cfg["actions"],
@@ -101,8 +99,85 @@ def contract(run):
             "assets": {name: {k: v for k, v in cfg["scene"][name].items() if k != "init_state"}
                        for name in (objects["object"], objects["container"])},
             "profiles": {k: cfg.get(k) for k in ("omy_stepping_profile", "omy_recording_profile", "omy_contact_sensor_profile")},
-            "joint_order": meta.get("performance", {}).get("joint_order"),
-            "action_metadata": {k: meta.get(k) for k in ("action_type", "action_names", "joint_units", "gripper_encoding", "control_hz")}}
+            "joint_order": joint_order, "action_metadata": action_metadata}
+
+
+def contract(run):
+    run = Path(run)
+    cfg = json.loads((run / "env_cfg.json").read_text())
+    with h5py.File(run / "omy_demos.hdf5") as stream:
+        meta = json.loads(stream["data"].attrs["robolab_omy_teleop"])
+    return env_contract(cfg, meta.get("performance", {}).get("joint_order"),
+                        {k: meta.get(k) for k in ("action_type", "action_names", "joint_units", "gripper_encoding", "control_hz")})
+
+
+def _leaf_differences(expected, actual, path=""):
+    """``{dotted path: {"target", "source"}}`` for every leaf where two JSON-like trees differ."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        out = {}
+        for key in sorted(set(expected) | set(actual), key=str):
+            out.update(_leaf_differences(expected.get(key), actual.get(key), f"{path}.{key}" if path else str(key)))
+        return out
+    return {} if expected == actual else {path: {"target": expected, "source": actual}}
+
+
+def _resolved_joints(names, joint_order):
+    """Joints an action term drives, in articulation order: its names may be regular expressions."""
+    if joint_order is None:
+        return list(names)
+    return [joint for joint in joint_order if any(re.fullmatch(name, joint) for name in names)]
+
+
+_digests = {}
+
+
+def _file_digest(path):
+    if path not in _digests:
+        _digests[path] = checksum(path) if Path(path).is_file() else f"missing file {path}"
+    return _digests[path]
+
+
+def cross_kind_differences(expected, actual):
+    """(blocking, recorded) between the target's contract and a source of another kind.
+
+    Such a source was recorded in its own environment, not the teleoperation one. The generator reads from it only
+    hand poses (forward kinematics of its joints on the target robot), object and container poses, gripper timing and
+    the grasp step, and every generated episode must still pass the target's success term. So the source must match
+    where that reading depends on it, and each other difference is recorded on its reference rather than refused:
+
+    - the robot model, by file content (the same file in another checkout matches);
+    - every action term's joints; arm terms also in type, scale and offset (absolute targets of the same joints).
+      Gripper (binary) terms may differ in encoding, which the source's reader converts;
+    - the physics step and control decimation (one waypoint per control step);
+    - the object and container assets, and the success rule (as for same-kind sources).
+    """
+    blocking = []
+    if _file_digest(expected["robot"]["spawn"]["usd_path"]) != _file_digest(actual["robot"]["spawn"]["usd_path"]):
+        blocking.append("robot.spawn.usd_path")
+    for key, value in (("sim.dt", lambda c: c["sim"]["dt"]), ("decimation", lambda c: c["decimation"]),
+                       ("assets", lambda c: c["assets"])):
+        if value(expected) != value(actual):
+            blocking.append(key)
+    terms = set(expected["actions"]) | set(actual["actions"])
+    for term in sorted(terms):
+        a, b = expected["actions"].get(term), actual["actions"].get(term)
+        if a is None or b is None:
+            blocking.append(f"actions.{term}")
+            continue
+        if _resolved_joints(a["joint_names"], expected["joint_order"]) != _resolved_joints(b["joint_names"], actual["joint_order"]):
+            blocking.append(f"actions.{term}.joint_names")
+        binary = "Binary" in a["class_type"] and "Binary" in b["class_type"]
+        if not binary and {k: v for k, v in a.items() if k != "joint_names"} != {k: v for k, v in b.items() if k != "joint_names"}:
+            blocking.append(f"actions.{term}")
+    success_blocking, allowed = contract_differences({"success": expected["success"]}, {"success": actual["success"]})
+    blocking += success_blocking
+    covered = ("robot.spawn.usd_path", "sim.dt", "decimation", "assets", "actions", "success")
+    recorded = {path: value for path, value in _leaf_differences(expected, actual).items()
+                if not any(path == c or path.startswith(c + ".") for c in covered)}
+    for term in sorted(terms):  # how the terms are written, and the converted gripper encoding
+        if term in expected["actions"] and term in actual["actions"]:
+            recorded.update(_leaf_differences(expected["actions"][term], actual["actions"][term], f"actions.{term}"))
+    return blocking, {**allowed, **recorded}
 
 
 def source_references(args):
@@ -140,10 +215,17 @@ def source_references(args):
         if key in seen:
             raise ValueError(f"Duplicate source reference: {key}")
         seen.add(key)
-        run = Path(ref["file"]).parent
-        if run not in contracts:
-            contracts[run] = contract(run)
-        differences, allowed = contract_differences(expected, contracts[run])
+        kind = ref.get("kind", "teleop")
+        task = None
+        if kind == "teleop":
+            run = Path(ref["file"]).parent
+            if run not in contracts:
+                contracts[run] = contract(run)
+            differences, allowed = contract_differences(expected, contracts[run])
+        else:
+            run = f"{ref['file']}:{ref['episode']}"
+            actual, task = _resolve(SOURCE_CONTRACTS, kind, run)(ref["file"], ref["episode"])
+            differences, allowed = cross_kind_differences(expected, actual)
         if differences:
             raise ValueError(f"Incompatible source {run}: {differences}")
         # Selection-manifest rows may carry an entry from an earlier comparison.
@@ -159,7 +241,7 @@ def source_references(args):
         with h5py.File(path) as stream:
             if ref["episode"] not in stream["data"] or not stream["data"][ref["episode"]].attrs.get("success", False):
                 raise ValueError(f"Missing/unsuccessful source: {key}")
-            ref["task"] = json.loads(stream["data"].attrs["robolab_omy_teleop"])["task"]
+            ref["task"] = task or json.loads(stream["data"].attrs["robolab_omy_teleop"])["task"]
     return references
 
 
@@ -238,18 +320,26 @@ SOURCE_READERS = {
     "teleop": read_teleop_episode,
     "scripted": "robolab.core.scripted_demos.mimic_source:read_episode",  # docs/scripted_demos.md
 }
+# Contract of one episode of a kind other than "teleop": ``(file, episode) -> (contract, task)``, the contract in the
+# fields of ``contract`` (``env_contract``); checked against the target by ``cross_kind_differences``.
+SOURCE_CONTRACTS = {
+    "scripted": "robolab.core.scripted_demos.mimic_source:source_contract",
+}
+
+
+def _resolve(registry, kind, where):
+    if kind not in registry:
+        raise ValueError(f"Unknown source kind {kind!r} for {where}; known: {sorted(registry)}")
+    entry = registry[kind]
+    if isinstance(entry, str):
+        module, name = entry.split(":")
+        entry = getattr(importlib.import_module(module), name)
+    return entry
 
 
 def read_source(reference, object_name, container_name):
     """The :class:`SourceEpisode` of a source reference ``{"file", "episode", "kind"?}``."""
-    kind = reference.get("kind", "teleop")
-    if kind not in SOURCE_READERS:
-        raise ValueError(f"Unknown source kind {kind!r} for {reference['file']}:{reference['episode']}; "
-                         f"known: {sorted(SOURCE_READERS)}")
-    reader = SOURCE_READERS[kind]
-    if isinstance(reader, str):
-        module, name = reader.split(":")
-        reader = getattr(importlib.import_module(module), name)
+    reader = _resolve(SOURCE_READERS, reference.get("kind", "teleop"), f"{reference['file']}:{reference['episode']}")
     return reader(reference["file"], reference["episode"], object_name, container_name)
 
 
