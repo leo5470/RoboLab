@@ -12,6 +12,10 @@ are offered on the page of the episode they belong to.
 Review marks (good / bad / unsure, with a note) are written to ``<family>/review.json``, keyed by episode name and
 carrying the episode's layout task and seed.
 
+Scripted collections in the OMY environment (``collect_omy.py``, below ``$OMY_SESSIONS_DIR``) are families too, with
+id ``omy/<session>``: every recorded attempt, failures marked in the layout column, explicit targets by id
+(``robolab.core.scripted_demos.omy_review``). Their videos need ``render_omy_review.py`` first.
+
 The page polls the server every 15 s while it is visible, so episodes appended by a running collection or MimicGen
 generation (any generator writing this layout) appear without a reload; MimicGen episodes also show their level
 and pick / place source episodes.
@@ -39,7 +43,7 @@ import urllib.parse
 import h5py
 import numpy as np
 
-from robolab.core.scripted_demos import paths
+from robolab.core.scripted_demos import omy_review, paths
 from robolab.core.scripted_demos.grasps import objects
 from robolab.core.scripted_demos.records import read_json, read_jsonl
 
@@ -166,8 +170,10 @@ def hd_videos(family_dir: pathlib.Path) -> dict[tuple[str, int], dict]:
 class Store:
     """Family discovery, per-family episode tables (cached on the HDF5 file's mtime) and review marks."""
 
-    def __init__(self, root: pathlib.Path):
+    def __init__(self, root: pathlib.Path, omy_root: pathlib.Path | None = None):
         self.root = root
+        self.omy_root = omy_root
+        self._omy_entries: dict[str, dict[str, omy_review.Entry]] = {}
         self._tables: dict[str, tuple[tuple, dict]] = {}
         self._lock = threading.Lock()
         self._review_lock = threading.Lock()
@@ -177,7 +183,35 @@ class Store:
         for pattern in ("*/pps.hdf5", "*/*/pps.hdf5"):
             for p in sorted(self.root.glob(pattern)):
                 found[p.parent.relative_to(self.root).as_posix()] = p.parent
+        if self.omy_root is not None:
+            found.update(omy_review.sessions(self.omy_root))
         return found
+
+    def omy_entry(self, fid: str, name: str) -> omy_review.Entry:
+        self.table(fid)
+        entry = self._omy_entries.get(fid, {}).get(name)
+        if entry is None:
+            raise KeyError(f"unknown episode {name!r}")
+        return entry
+
+    def _omy_table(self, fid: str) -> dict:
+        session = self.family_dir(fid)
+        files = sorted(session.glob("*/part_*/omy_demos.hdf5")) + [session / "attempts.jsonl"]
+        key = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in files if p.exists())
+        with self._lock:
+            cached = self._tables.get(fid)
+            if cached and cached[0] == key:
+                return cached[1]
+        listed = omy_review.entries(session)
+        rows = omy_review.attempts(session)
+        manifest = read_json(session / "manifest.json", {})
+        table = {"attrs": {"task": manifest.get("family", ""), "prompt": f"{manifest.get('family', '')} "
+                           f"(scripted, OMY environment{', explicit targets' if manifest.get('targets') else ''})"},
+                 "episodes": [omy_review.row(e, rows.get((e.part, e.group))) for e in listed]}
+        with self._lock:
+            self._tables[fid] = (key, table)
+            self._omy_entries[fid] = {e.name: e for e in listed}
+        return table
 
     def family_dir(self, fid: str) -> pathlib.Path:
         fams = self.families()
@@ -186,6 +220,8 @@ class Store:
         return fams[fid]
 
     def table(self, fid: str) -> dict:
+        if fid.startswith(omy_review.PREFIX):
+            return self._omy_table(fid)
         family_dir = self.family_dir(fid)
         h5 = family_dir / "pps.hdf5"
         st = h5.stat()
@@ -275,7 +311,21 @@ class Store:
         return {"id": fid, **table["attrs"], "episodes": episodes, "failures": failures, "reviews": self.reviews(fid),
                 "summary": read_json(family_dir / "summary.json", {})}
 
+    def _omy_episode(self, fid: str, name: str) -> dict:
+        session = self.family_dir(fid)
+        entry = self.omy_entry(fid, name)
+        attempt = omy_review.attempts(session).get((entry.part, entry.group))
+        row, more = omy_review.row(entry, attempt), omy_review.detail(entry, attempt)
+        names = [e["name"] for e in self.table(fid)["episodes"]]
+        i = names.index(name)
+        return {**row, **more, "family": fid, "fps": FPS, "hd": None,
+                "prev": names[i - 1] if i > 0 else None, "next": names[i + 1] if i < len(names) - 1 else None,
+                "index": i, "count": len(names), "phases": phases(row["steps"], more["executor"]),
+                "review": self.reviews(fid).get(name)}
+
     def episode(self, fid: str, name: str) -> dict:
+        if fid.startswith(omy_review.PREFIX):
+            return self._omy_episode(fid, name)
         family_dir = self.family_dir(fid)
         with open_h5(family_dir / "pps.hdf5") as f:
             g = f["data"][name]
@@ -310,7 +360,29 @@ class Renderer:
         self._locks: dict[pathlib.Path, threading.Lock] = {}
         self._locks_lock = threading.Lock()
 
+    def _omy_path(self, fid: str, name: str) -> pathlib.Path:
+        session = self.store.family_dir(fid)
+        entry = self.store.omy_entry(fid, name)
+        video = omy_review.review_video(session, entry)
+        if video.is_file():  # encoded by render_omy_review.py
+            return video
+        images = omy_review.review_images(session, entry)
+        if not images.is_file():
+            raise KeyError(f"not rendered yet: run scripts/scripted_demos/render_omy_review.py {session}")
+        st = images.stat()
+        out = self.cache_dir / fid.replace("/", "__") / f"{name}_{entry.group}_{st.st_mtime_ns}.mp4"
+        if out.exists():
+            return out
+        with self._locks_lock:
+            lock = self._locks.setdefault(out, threading.Lock())
+        with lock, self._slots:
+            if not out.exists():
+                encode(omy_review.frames(session, entry), out)
+        return out
+
     def path(self, fid: str, name: str) -> pathlib.Path:
+        if fid.startswith(omy_review.PREFIX):
+            return self._omy_path(fid, name)
         h5 = self.store.family_dir(fid) / "pps.hdf5"
         with open_h5(h5) as f:
             g = f["data"][name]
@@ -491,6 +563,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--demos-dir", type=pathlib.Path, default=objects.scripted_demos_root(),
                         help="scripted demos root (default: $SCRIPTED_DEMOS_DIR)")
+    parser.add_argument("--omy-dir", type=pathlib.Path, default=paths.omy_sessions_root(),
+                        help="scripted OMY sessions root (default: $OMY_SESSIONS_DIR, else output/omy_sessions)")
     parser.add_argument("--cache-dir", type=pathlib.Path, default=paths.demo_viewer_cache(),
                         help="where encoded episode videos are kept (default: $DEMO_VIEWER_CACHE, else output/demo_viewer_cache)")
     parser.add_argument("--host", default="127.0.0.1",
@@ -502,13 +576,14 @@ def main() -> None:
 
     if shutil.which("ffmpeg") is None:
         raise SystemExit("ffmpeg not found on PATH")
-    store = Store(args.demos_dir)
+    store = Store(args.demos_dir, args.omy_dir)
     renderer = Renderer(store, args.cache_dir, args.workers)
     Handler.store, Handler.renderer = store, renderer
     server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
     fams = store.families()
-    print(f"[demo_viewer] {len(fams)} families in {args.demos_dir}; videos cached in {args.cache_dir}", flush=True)
+    print(f"[demo_viewer] {len(fams)} families in {args.demos_dir} and {args.omy_dir}; videos cached in "
+          f"{args.cache_dir}", flush=True)
     print(f"[demo_viewer] serving on http://localhost:{args.port}", flush=True)
     if args.prerender:
         threading.Thread(target=prerender, args=(store, renderer), daemon=True).start()

@@ -24,6 +24,11 @@ def scripted_demos_root() -> pathlib.Path:
     return _location("SCRIPTED_DEMOS_DIR", ROBOLAB_DIR / "output" / "scripted_demos")
 
 
+def omy_sessions_root() -> pathlib.Path:
+    """Scripted collections in the OMY environment (``scripts/scripted_demos/collect_omy.py``), one folder each."""
+    return _location("OMY_SESSIONS_DIR", ROBOLAB_DIR / "output" / "omy_sessions")
+
+
 def kit_portable_root() -> pathlib.Path:
     """Kit's data/cache/logs root for the simulator scripts and GraspDataGen runs."""
     return _location("KIT_PORTABLE_ROOT", ROBOLAB_DIR / "output" / "kit_portable")

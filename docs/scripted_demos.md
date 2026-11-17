@@ -192,6 +192,30 @@ leocheng's 2026-10-28 milkjug_a01 recording, its `env_cfg.json` differs only in 
 only in generation settings. leocheng's exact source contract still refuses to pool these recordings with his older
 ones: it compares the robot's asset path literally (another checkout) and the changed `sim` settings.
 
+**Explicit targets matching the v2 distribution.** Training scenes follow the object's Simple-PnP v2 layout
+distribution without using the evaluation layouts, as leocheng's coverage sets do: `robolab.core.omy_teleop.coverage_profile`
+records the 50 v2 evaluation layouts, derives the distribution-level profile (object and bin XY boxes, distance range,
+yaw arc, object-x band shares) in a v1 scene, and samples targets that refuse any arrangement within 2 cm (joint XY)
+of an evaluation layout. `collect_omy.py --targets` builds each target in that v1 scene: the poses are written after
+the reset and the OMY preparation sets them on their supports and checks them as for an authored layout.
+
+```bash
+D=$OMY_SESSIONS_DIR/milkjug_a01_v2; R="scripts/scripted_demos/run.sh --pxr -m robolab.core.omy_teleop.coverage_profile"
+$R layouts --object milkjug_a01 --output $D/targets/evaluation_layouts.json --scene assets/scenes/simple_pnp_v2/pnp_230_milkjug_a01_[0-9][0-9].usda
+$R profile --object milkjug_a01 --layouts $D/targets/evaluation_layouts.json --output $D/targets/profile.json --scene assets/scenes/simple_pnp/pnp_230_milkjug_a01_01.usda
+$R targets --profile-file $D/targets/profile.json --count 20 --seed 0 --exclude $D/targets/evaluation_layouts.json --output $D/targets/targets.json --scene assets/scenes/simple_pnp/pnp_230_milkjug_a01_01.usda
+SIM_GPU=0 scripts/scripted_demos/run.sh scripts/scripted_demos/collect_omy.py --object 230 --layouts 01 --targets $D/targets/targets.json --output $D/<session>
+```
+
+milkjug_a01, 20 targets (2026-11-17): all 20 succeeded in 22 attempts (two tracking errors, retried), 8 minutes; the
+preparation left the objects within 0.8 mm and 0° of their targets; the nearest recorded start is 6.0 cm (median
+10.6 cm) from an evaluation layout.
+
+**Review.** `render_omy_review.py <session>` renders each recording's policy cameras from the recorded states with
+leocheng's materializer (`<session>/review/.../images.hdf5`, half resolution by default); the demo viewer then lists
+the session (`omy/<session>`, below `$OMY_SESSIONS_DIR`) with every attempt, failures marked, targets by id, and
+encodes its videos (over-shoulder | wrist) like the other families.
+
 ## Batch objects
 
 Pitcher (303), mug (301), utilityjug_a01 (283), utilityjug_a02 (284), milkjug_a01 (230), milkjug_a02 (231) and

@@ -21,6 +21,7 @@ import pathlib
 import numpy as np
 
 from robolab.core.scripted_demos import collect, select, sim
+from robolab.core.scripted_demos.grasps import frames
 from robolab.core.scripted_demos.grasps import library as grasp_library
 from robolab.core.scripted_demos.grasps import objects
 from robolab.core.scripted_demos.kinematics import Chain
@@ -98,6 +99,7 @@ class OmySession(collect.Session):
         self.obs = None
         self.attempts = 0
         self.preparation = None
+        self.target = None  # {"id", "poses": {name: [x, y, z, qw, qx, qy, qz]}, ...} for the next attempt
 
         recorder = self.env.recorder_manager
         recorder.set_buffered_recording()
@@ -151,9 +153,13 @@ class OmySession(collect.Session):
         if self.attempts:
             self.env.reset_eval_state()
         self.env.reset(seed=int(seed))
+        if self.target is not None:
+            self._place(self.target["poses"])
         preparation = ScenePreparation(self.env, self.options)
         while (report := preparation.advance())["status"] == "settling":
             pass
+        if self.target is not None:
+            report = {**report, "target": self._target_record()}
         self.preparation = report
         if report["status"] != "ready":
             self.env.recorder_manager.clear()
@@ -168,6 +174,36 @@ class OmySession(collect.Session):
         self.ik.reset_command()
         return self.obs
 
+    def _place(self, poses: dict) -> None:
+        """Explicit target arrangement (``target_sampler`` manifest row, env-local root poses): written at rest after
+        the reset, the way the preparation writes its corrections; the preparation then sets the heights on the
+        supports and checks the layout as for an authored one."""
+        import torch
+
+        env = self.env
+        for name, pose in poses.items():
+            asset = env.scene[name]
+            root = torch.tensor(pose, dtype=torch.float32, device=env.device)[None].clone()
+            root[:, :3] += env.scene.env_origins[0]
+            asset.write_root_pose_to_sim(root)
+            asset.write_root_velocity_to_sim(torch.zeros(1, 6, device=env.device))
+        env.scene.write_data_to_sim()
+        env.sim.forward()
+        env.scene.update(dt=0.0)
+
+    def _target_record(self) -> dict:
+        """The target and where the preparation left each object (root XY and yaw error against the target)."""
+        def yaw(q):  # (w, x, y, z)
+            return np.degrees(np.arctan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] ** 2 + q[3] ** 2)))
+
+        achieved = {}
+        for name, pose in self.target["poses"].items():
+            T = sim.object_pose(self.world, name)
+            q = frames.matrix_to_quat(T[:3, :3])
+            achieved[name] = {"xy_error_m": float(np.linalg.norm(T[:2, 3] - np.asarray(pose[:2]))),
+                              "yaw_error_deg": float((yaw(q) - yaw(np.asarray(pose[3:7])) + 180) % 360 - 180)}
+        return {**self.target, "achieved": achieved}
+
     def settle(self, buffer, writer, seed, **_) -> int:
         return 0  # the preparation has settled the scene, unrecorded
 
@@ -180,11 +216,13 @@ class OmySession(collect.Session):
         command[7] = 1.0 - 2.0 * command[7]
         return super().step(command)
 
-    def run(self, seed: int, **kwargs):
+    def run(self, seed: int, *, target: dict | None = None, **kwargs):
         """``collect.Session.run``; the attempt is exported when the env terminates (success or time-out), or as a
-        failure when the scripted executor stops first."""
+        failure when the scripted executor stops first. ``target``: an explicit arrangement for this attempt
+        (a ``target_sampler`` manifest row, plus its manifest under ``"manifest"``), instead of the authored layout."""
         from robolab.core.omy_teleop.runner import finish_interrupted
 
+        self.target = target
         kwargs.pop("record", None), kwargs.pop("video", None)
         try:
             result, _ = super().run(seed, record=False, video=None, **kwargs)
@@ -194,7 +232,8 @@ class OmySession(collect.Session):
         if not self.env.all_terminated:
             finish_interrupted(self.env, True)
         result.extra["omy"] = {"episode": f"demo_{self.attempts - 1}",
-                               "preparation": {k: self.preparation.get(k) for k in ("status", "elapsed_s", "placement")}}
+                               "preparation": {k: self.preparation.get(k)
+                                               for k in ("status", "elapsed_s", "placement", "target")}}
         return result, None
 
 
