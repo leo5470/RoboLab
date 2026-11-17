@@ -53,11 +53,18 @@ class Chain:
     limits: np.ndarray  # (K, 2)
     T_root: np.ndarray  # (4, 4) panda_link0 in the robot frame
     T_end_base: np.ndarray  # (4, 4) chain end → gripper base_link
+    # Arm joints (0-based) every IK step leaves where they are: their Jacobian columns are zero, so ``ik``,
+    # ``dls_delta`` and the simulator-side ``sim.ArmIK`` solve over the other joints and hold these at the value they
+    # start from (home after a reset). ``(2,)`` holds panda_joint3 as the OMY MimicGen generator does.
+    locked: tuple[int, ...] = ()
 
     @classmethod
     def load(cls, path: pathlib.Path) -> "Chain":
         d = np.load(path)
         return cls(d["T0"], d["T1inv"], d["revolute"].astype(bool), d["limits"], d["T_root"], d["T_end_base"])
+
+    def with_locked(self, joints) -> "Chain":
+        return dataclasses.replace(self, locked=tuple(int(j) for j in joints))
 
     @property
     def joint_limits(self) -> np.ndarray:
@@ -83,11 +90,14 @@ class Chain:
         return self._forward(q)[0]
 
     def jacobian(self, q: np.ndarray):
-        """Geometric Jacobian at ``base_link`` (..., 6, 7) and the pose."""
+        """Geometric Jacobian at ``base_link`` (..., 6, 7) and the pose; the ``locked`` joints' columns are zero."""
         T, axes, origins = self._forward(q)
         p = T[..., None, :3, 3]
         Jv = np.cross(axes, p - origins)
-        return np.concatenate([np.swapaxes(Jv, -1, -2), np.swapaxes(axes, -1, -2)], -2), T
+        J = np.concatenate([np.swapaxes(Jv, -1, -2), np.swapaxes(axes, -1, -2)], -2)
+        if self.locked:
+            J[..., list(self.locked)] = 0.0
+        return J, T
 
     def ik(self, T_target: np.ndarray, q0: np.ndarray, *, iterations: int = 200, damping: float = 0.05,
            max_step: float = 0.2, pos_tol: float = 0.002, rot_tol: float = np.radians(2.0),

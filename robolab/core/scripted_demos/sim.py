@@ -107,8 +107,9 @@ class ArmIK:
     """Absolute-pose IK step on the DROID ``base_link`` that produces joint targets for the stock env (D1).
 
     Derived from ``scripts/qualify_scene_trial.py:335-378``: IsaacLab's
-    ``DifferentialIKController(pose, absolute, dls)`` over all seven arm joints, one step per control step, the joint
-    change clamped to ±0.04 rad and then to the soft joint limits.
+    ``DifferentialIKController(pose, absolute, dls)`` over the seven arm joints (less the chain's ``locked`` ones, which
+    keep their reset value), one step per control step, the joint change clamped to ±0.04 rad and then to the soft
+    joint limits.
 
     One difference: the qualify driver evaluates the controller at the *measured* joints and clamps around them. With
     the DROID arm's joint PD (stiffness 400, damping 80) the joints then move only about K/D x 0.04 = 0.2 rad/s, so a
