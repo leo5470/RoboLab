@@ -302,6 +302,7 @@ def read_teleop_episode(path, episode, object_name, container_name):
     with h5py.File(path, "r") as file:
         group = file["data"][episode]
         success = bool(group.attrs.get("success", False))
+        seven_axis = recording_seven_axis(file)
         tree = {"actions": group["actions"][()]}
         for part in ("initial_state", "states"):
             tree[part] = {
@@ -311,7 +312,21 @@ def read_teleop_episode(path, episode, object_name, container_name):
             }
     arrays = source_arrays(tree, object_name, container_name)
     return SourceEpisode(actions=arrays["actions"], joint_position=arrays["joint_position"],
-                         object_pose=arrays["object_pose"], grasp=arrays["grasp"], success=success)
+                         object_pose=arrays["object_pose"], grasp=arrays["grasp"], success=success,
+                         seven_axis=seven_axis)
+
+
+def recording_seven_axis(file):
+    """Whether an Isaac Lab recording's arm used all seven joints: a scripted recording in the OMY env
+    (``robolab_omy_teleop.operator``, ``robolab.core.scripted_demos.omy_collect``) that did not hold panda_joint3,
+    or a MimicGen run with ``--seven-axis-ik``. L100 teleoperation never moves it."""
+    attrs = file["data"].attrs
+    teleop = json.loads(attrs.get("robolab_omy_teleop", "{}") or "{}")
+    operator = teleop.get("operator") or {}
+    if operator.get("kind") == "scripted" and "panda_joint3" not in operator.get("locked_joints", []):
+        return True
+    mimicgen = json.loads(attrs.get("robolab_omy_mimicgen", "{}") or "{}")
+    return bool(mimicgen.get("seven_axis_ik", False))
 
 
 # Reader per source kind: a function, or "module:function" imported on first use. A reference without a

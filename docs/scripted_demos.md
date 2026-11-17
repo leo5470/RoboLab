@@ -161,6 +161,37 @@ repairs (`--approach-m 0.1 --lift-clearance-m 0.03 --over-bin --connection-speed
   joints. With `--seven-axis-ik` the generated episodes command joint 3 over -41..33° (the sources: up to 25°): the
   IK resolves the seventh joint its own way, not as the source did; a six-axis source in the pool is refused.
 
+## In the OMY environment
+
+`scripts/scripted_demos/collect_omy.py` runs the same planner and controller in the environment OMY teleoperation is
+collected in, and records like an OMY collection (`robolab/core/scripted_demos/omy_collect.py`):
+
+```bash
+SIM_GPU=0 scripts/scripted_demos/run.sh scripts/scripted_demos/collect_omy.py --object 230 --layouts 01 03 04 \
+    --episodes-per-layout 2 --output <session dir> [--hold-joint3] [--qualified]
+```
+
+- **Environment.** The OMY env registered from the task (`register_omy_envs`, `OmyEnv`), configured with the options
+  OMY collection sessions use (`omy_teleop.collection.build_parser` defaults: 15 Hz, held-target stepping, compact
+  state-only recording, required contact sensors, shared placement checks, 2 GPU partitions, solver cap 32, 120 s
+  episodes). Its gripper is limited to 5 rad/s like the L100's; the stock DROID registration's limit is a legacy field
+  Isaac Lab 2.2 ignores.
+- **Start.** OMY's unrecorded scene preparation (`ScenePreparation`): the objects are placed on their supports and must
+  settle before recording starts; a layout it rejects is not collected (milkjug_a01 layout 02: jug and bin 0.8 mm
+  apart, below its 2 cm footprint clearance). No settle rows are recorded.
+- **Output.** An OMY session: `<output>/<layout task>/part_000/{omy_demos.hdf5, env_cfg.json}`, every attempt kept
+  (failures too), plus `attempts.jsonl`, `summary.json`, `manifest.json`. `robolab_omy_teleop` carries the OMY
+  metadata with `operator: {"kind": "scripted", "locked_joints": ...}` and calibration marked as not applying;
+  images are rendered later, as for OMY collection.
+
+Such a recording is an OMY recording: leocheng's recording validation passes it with the same warning MimicGen output
+has (`invalid_leader_samples`), it can be a MimicGen target, and it is read as a teleoperation-format source; a
+recording that did not hold joint 3 is seven-axis (`mimic_sources.recording_seven_axis`). Against the OMY env of
+leocheng's 2026-10-28 milkjug_a01 recording, its `env_cfg.json` differs only in settings changed on `quest` since
+(finger contact sensors, scene queries, render mode, `speed_source`) and bookkeeping; against MimicGen's env of today
+only in generation settings. leocheng's exact source contract still refuses to pool these recordings with his older
+ones: it compares the robot's asset path literally (another checkout) and the changed `sim` settings.
+
 ## Batch objects
 
 Pitcher (303), mug (301), utilityjug_a01 (283), utilityjug_a02 (284), milkjug_a01 (230), milkjug_a02 (231) and

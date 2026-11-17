@@ -65,3 +65,20 @@ def test_readers_can_be_registered_by_import_path(tmp_path, monkeypatch):
     monkeypatch.setitem(mimic_sources.SOURCE_READERS, "alias", "robolab.core.omy_teleop.mimic_sources:read_teleop_episode")
     source = read_source({"file": str(path), "episode": "demo_0", "kind": "alias"}, OBJECT, CONTAINER)
     assert source.grasp == 2
+
+
+@pytest.mark.parametrize("attrs, seven", [
+    ({}, False),  # L100 teleoperation
+    ({"robolab_omy_teleop": '{"task": "T"}'}, False),
+    ({"robolab_omy_teleop": '{"operator": {"kind": "scripted", "locked_joints": []}}'}, True),
+    ({"robolab_omy_teleop": '{"operator": {"kind": "scripted", "locked_joints": ["panda_joint3"]}}'}, False),
+    ({"robolab_omy_mimicgen": '{"seven_axis_ik": true}'}, True),
+    ({"robolab_omy_mimicgen": '{"seven_axis_ik": false}'}, False),
+])
+def test_teleop_reader_takes_seven_axis_from_the_recording(tmp_path, attrs, seven):
+    """Scripted recordings in the OMY env (omy_collect) and --seven-axis-ik output move panda_joint3 by design."""
+    path = _write_teleop(tmp_path / "omy_demos.hdf5")
+    with h5py.File(path, "a") as stream:
+        stream["data"].attrs.update(attrs)
+    source = read_source({"file": str(path), "episode": "demo_0"}, OBJECT, CONTAINER)
+    assert source.seven_axis is seven
