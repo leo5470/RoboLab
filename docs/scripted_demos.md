@@ -112,14 +112,22 @@ generator's +1 open / -1 closed convention, and the grasp step defined the same 
 A source reference is `{"file": "<family>/pps.hdf5", "episode": "episode_000012", "kind": "scripted"}`, for example
 in a path-screen `--sources` file. Episodes collected before the state group existed are refused; collect them again.
 
-**`panda_joint3`.** Scripted episodes move all seven joints (D1, D2); the generator holds joint 3 at home because
-the OMY leader has six axes. The scripted reader marks its episodes `seven_axis`, so the generator accepts their
-joint-3 motion (it refuses it only from teleoperation sources) and follows their end-effector poses with six joints.
-Generated episodes therefore keep joint 3 at home even when the source moved it. Whether six joints reach a source's
-poses is checked by the path screen, which holds joint 3 at the episode's starting home value for these sources.
-Replaying the stored plans of the 53 scripted and 50 MimicGen pitcher episodes through the command emulation with
-joint 3 held at home, 51/53 and 40/50 still converge (failures at pregrasp and preplace), and every grasp id keeps at
-least one converging episode.
+**Start.** An episode begins with the collector's settle rows: the arm held at its reset pose while the objects drop
+from their authored, slightly airborne poses (8.5 cm for milkjug_a01) and come to rest. The reader starts the source
+at the last settle row (`mimic_source.settled_start`), objects at rest, as a teleoperation recording starts; the
+generator takes the first row as the scene the grasp segment is relative to and measures the grasp step's 2 cm lift
+and the repairs' lift clearance from it.
+
+**`panda_joint3`.** By default scripted episodes move all seven joints (D1, D2); the generator holds joint 3 at home
+because the OMY leader has six axes. The reader marks these episodes `seven_axis`, so the generator accepts their
+joint-3 motion (it refuses it only from six-axis sources) and follows their end-effector poses with six joints, and the
+path screen holds joint 3 at the episode's starting value for them. Two alternatives:
+
+- `collect_demos.py --hold-joint3` plans and executes with joint 3 held at home (`Chain.locked`; episode attribute
+  `locked_joints`). The episodes are six-axis sources, checked for the held joint like teleoperation recordings.
+- `--seven-axis-ik` on the generator (docs/omy_mimicgen.md) solves IK over all seven joints for a pool of seven-axis
+  sources only, so the generated episodes move joint 3 too; the PPS export marks them `seven_axis` and keeps them out of
+  files of six-axis episodes.
 
 **Environment.** Scripted episodes are recorded in the stock DROID joint-position env (R2), not the OMY
 teleoperation env the generator runs in. Their contract is read from the `env_cfg.json` RoboLab recorded for the
@@ -132,20 +140,26 @@ actuators, so scripted episodes close the gripper faster. The target still needs
 task (environment, reset state, run attributes).
 
 **Pilot (2026-11-17, milkjug_a01).** leocheng's `pilot_random` settings (target: teleoperation layout 00, episode 1;
-random source among 3 nearest; container ±1 cm, object ±2.5 cm / ±5°; seeds 12340 / 98760; 10 attempts), once with
-his 7 teleoperation sources and once with 7 scripted episodes from layouts 01-04, same code and GPU:
+random source selection; container ±1 cm, object ±2.5 cm / ±5°; seeds 12340 / 98760; 10 attempts), with his 7
+teleoperation sources and with 7 scripted episodes from layouts 01-04, same code and GPU; then with his production
+repairs (`--approach-m 0.1 --lift-clearance-m 0.03 --over-bin --connection-speed-m-s 0.25`). Data:
+`/tmp2/shermanchang/mimic_checks/scripted_sources_20261117`.
 
-| Sources | Successes | Largest IK error per attempt |
+| Sources | No repairs | Production repairs |
 |---|---|---|
-| teleoperation | 7/10 (10/10 on 2026-10-28, before `speed_source: "pose"`) | 7-85 mm |
-| scripted | 4/10 | 21-275 mm |
+| teleoperation | 7/10 (10/10 on 2026-10-28, before `speed_source: "pose"`) | 8/10 |
+| scripted, followed with six joints (default) | 5/10 | 10/10 |
+| scripted, collected with `--hold-joint3` | 4/10 | 10/10 |
+| scripted, generated with `--seven-axis-ik` | 5/10 | 10/10 |
 
-Two causes, both from the arm, not the gripper: (1) with `panda_joint3` at home, 5 of the 7 scripted paths are not
-reachable at this target (CPU path screen: 128-225 mm in the placement segment); these are the episodes whose
-7-DoF IK moved joint 3 by 16-25°, while the two that moved it 10-11° are reachable, as are the teleoperation paths up
-to 78 mm. (2) With a reachable source the jug is pushed up to 10 mm before the gripper closes, so the six-joint arm
-reaching the scripted hand poses collides where the 7-DoF plan, checked for its own posture, did not. Next: collect
-scripted sources with joint 3 held at home so the source arm moves as the generator's does.
+- Before the settle-row start, the scripted pools reached 4/10 without repairs and were refused by the repairs: the lift
+  was measured from the airborne row, 8.5 cm short, and the grasp segment was placed relative to it.
+- Without repairs, a source whose layout puts the bin on the other side of the object than the target's leaves the
+  six-joint workspace while carrying (CPU path screen: 116-235 mm), whatever its kind: 5 of the 7 scripted and 2 of
+  the 7 teleoperation sources here. The repairs replace the carry with a connection to the over-bin cut.
+- Holding joint 3 in the source changes neither result, and neither does following seven-axis sources with seven
+  joints. With `--seven-axis-ik` the generated episodes command joint 3 over -41..33° (the sources: up to 25°): the
+  IK resolves the seventh joint its own way, not as the source did; a six-axis source in the pool is refused.
 
 ## Batch objects
 

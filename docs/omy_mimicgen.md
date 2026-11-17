@@ -179,6 +179,8 @@ The generator and the CPU path screen read every source episode through `mimic_s
 
 Before the simulator starts, `source_references` checks each source's environment contract against the target recording's. Teleoperation sources keep the exact comparison (`contract_differences`). A source of another kind was recorded in its own environment: its contract comes from `mimic_sources.SOURCE_CONTRACTS` (for `"scripted"`, the `env_cfg.json` RoboLab recorded for the episode's layout task), and `cross_kind_differences` refuses it only where the generator reads it: the robot model (by file content), every action term's joints and the arm terms' type, scale and offset (a gripper term's encoding may differ; the reader converts it), the physics step and decimation, the object and container assets, and the success rule. Every other difference (simulation and render settings, OMY stepping/recording profiles, the gripper velocity limit, joint order and action metadata) is recorded on the source reference as `contract_differences` and travels with it into `robolab_omy_mimicgen`. Generated episodes still run in the target's environment and must pass its success term; such differences can only change how many succeed.
 
+With `--seven-axis-ik` the IK solves over all seven arm joints, so generated episodes move `panda_joint3` like their sources (`seven_axis_ik` in `robolab_omy_mimicgen`). It takes seven-axis sources only (scripted episodes collected with 7-DoF IK): a six-axis source, teleoperation or `--hold-joint3`, is refused while loading, so neither an episode (with `--select-source-per-subtask`) nor a run mixes six- and seven-joint motion. The PPS export marks such episodes `seven_axis` and refuses files that mix them with six-axis ones. Without the flag every generated episode holds joint 3 at home, whatever its sources.
+
 ## Options
 
 | Option | Default | Meaning |
@@ -249,7 +251,9 @@ each action what the server returns. `robolab/core/omy_postprocess/pps_hdf5.py` 
 Rollouts send the family name as the PPS task (or omit it) and record `layout_task` in their outcome
 records. Arm command column 2 (`panda_joint3`) is held at 0.0, the DROID home value, because the L100
 has six axes; `validation.json` records its measured range, and any other constant column fails the
-export. Generated demos carry `invalid_leader_samples` on every row because MimicGen reads no leader
+export. The exception is a recording generated with `--seven-axis-ik` (see "Source kinds"): its episodes
+carry `seven_axis`, may move `panda_joint3`, and `validation.json` says the joint is not held; a file never
+mixes six- and seven-axis episodes. Generated demos carry `invalid_leader_samples` on every row because MimicGen reads no leader
 device; the export accepts that warning only when it covers every row. `manifest.json` records the
 pool, training file, RoboLab revision and these conventions.
 
