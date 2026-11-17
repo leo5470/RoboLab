@@ -20,7 +20,7 @@ from .options import build_parser as teleop_parser
 EEF = "robot"
 EE_BODY = "base_link"
 GRASP_SIGNAL = "grasp"
-# The six-axis L100 never commands panda_joint3; IK keeps it at its home value.
+# The six-axis L100 never commands panda_joint3; IK keeps it at its home value (unless --seven-axis-ik).
 LOCKED_JOINT = "panda_joint3"
 MAX_JOINT_STEP = 0.5
 
@@ -44,6 +44,11 @@ def build_parser():
     parser.add_argument("--fixed-source-index", type=int, help="Force one pool source for qualification or a single-source baseline")
     parser.add_argument("--trial-manifest", help="JSON trials list with fixed ids and scene seeds for paired comparisons")
     parser.add_argument("--follow-source-schedule", action="store_true", help="Use each trial's predetermined source_index as the baseline")
+    parser.add_argument("--seven-axis-ik", action="store_true",
+                        help="Solve IK over all seven arm joints, so panda_joint3 moves too (recorded as "
+                             "seven_axis_ik; the PPS export marks the episodes seven_axis). Seven-axis sources only "
+                             "(scripted episodes collected with 7-DoF IK): a six-axis source (teleoperation, "
+                             "--hold-joint3) is refused, so no episode or run mixes six- and seven-joint motion.")
     parser.add_argument("--select-source-per-subtask", action="store_true",
                         help="Choose the placement segment's source separately from the grasp segment's. A fixed or "
                              "scheduled source then applies to the grasp only; a trial's placement_source_index, "
@@ -238,7 +243,8 @@ def mimic_env_class():
         def _mimic_setup(self):
             robot = self.scene["robot"]
             self._mimic_arm_ids = robot.find_joints(list(ARM_JOINTS), preserve_order=True)[0]
-            free = [name for name in ARM_JOINTS if name != LOCKED_JOINT]
+            seven = getattr(self.cfg, "mimic_seven_axis", False)
+            free = [name for name in ARM_JOINTS if seven or name != LOCKED_JOINT]
             self._mimic_ik_ids = robot.find_joints(free, preserve_order=True)[0]
             self._mimic_ik_columns = [ARM_JOINTS.index(name) for name in free]
             self._mimic_body = robot.find_bodies(EE_BODY)[0][0]
@@ -385,6 +391,7 @@ def load_sources(env, pool, references, object_name, container_name, repairs=Non
 
     arm_ids = env.scene["robot"].find_joints(list(ARM_JOINTS), preserve_order=True)[0]
     locked = ARM_JOINTS.index(LOCKED_JOINT)
+    seven_axis_ik = getattr(env.cfg, "mimic_seven_axis", False)
     home = env.scene["robot"].data.default_joint_pos[0, arm_ids[locked]].item()
     sources = []
     for reference in references:
@@ -392,6 +399,9 @@ def load_sources(env, pool, references, object_name, container_name, repairs=Non
         source = read_source(reference, object_name, container_name)
         if not source.success:
             raise ValueError(f"Source changed or unsuccessful: {path}:{name}")
+        if seven_axis_ik and not source.seven_axis:
+            raise ValueError(f"{path}:{name} is a six-axis source; --seven-axis-ik takes seven-axis sources only, so "
+                             "no episode or run mixes six- and seven-joint motion")
         if source.joint_names is not None and list(source.joint_names) != list(env.scene["robot"].joint_names):
             raise ValueError(f"{path}:{name} records joints {list(source.joint_names)}, "
                              f"not the generator robot's {list(env.scene['robot'].joint_names)}")
@@ -536,6 +546,8 @@ def run(args):
                       "manifest_sha256": checksum(args.target_manifest), "poses": poses,
                       **{k: v for k, v in row.items() if k not in ("id", "poses")}}
         mimic_cfg(cfg, object_name, container_name, args)
+        # Read when the env first sets up its IK (``_mimic_setup``), which can happen while it is created.
+        cfg.mimic_seven_axis = args.seven_axis_ik
         pose_range, object_pose_range = (
             {"x": (-xy, xy), "y": (-xy, xy), "yaw": (-yaw, yaw)}
             for xy, yaw in ((args.pose_range, args.yaw_range), (args.object_pose_range, args.object_yaw_range)))
@@ -582,6 +594,7 @@ def run(args):
                 # 2: per-subtask parents in attempt and episode records, optional explicit target.
                 "schema_version": 2, "sources": sources, "seed": args.seed,
                 "select_source_per_subtask": args.select_source_per_subtask, "target": target,
+                "seven_axis_ik": args.seven_axis_ik,
                 "task_source": resolution.metadata(), "task_source_difference": task_source_difference,
                 "selection_strategy": args.selection_strategy, "selection_seed": args.selection_seed,
                 "nn_k": min(args.nn_k, len(sources)), "fixed_source_index": args.fixed_source_index,
